@@ -3,7 +3,7 @@
 	import { onMount, tick, getContext } from 'svelte';
 	import { createEventDispatcher } from 'svelte';
 
-	import { mobile, models, settings } from '$lib/stores';
+	import { mobile, models, settings, user } from '$lib/stores';
 
 	import { generateMoACompletion } from '$lib/apis';
 	import { updateChatById } from '$lib/apis/chats';
@@ -281,7 +281,11 @@
 									>
 										<div class="flex items-center gap-1.5">
 											<div class="-translate-y-[1px]">
-												{model ? `${model.name}` : history.messages[_messageId]?.model}
+												{$user?.role === 'admin'
+													? model
+														? `${model.name}`
+														: history.messages[_messageId]?.model
+													: '智能营销助手'}
 											</div>
 										</div>
 									</button>

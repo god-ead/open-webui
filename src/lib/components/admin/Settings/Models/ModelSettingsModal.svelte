@@ -42,6 +42,7 @@
 
 	let selectedModelId = '';
 	let defaultModelIds = [];
+	let forceUserDefaultModels = false;
 
 	let selectedPinnedModelId = '';
 	let defaultPinnedModelIds = [];
@@ -74,6 +75,7 @@
 		} else {
 			defaultModelIds = [];
 		}
+		forceUserDefaultModels = config?.FORCE_USER_DEFAULT_MODELS ?? false;
 
 		if (config?.DEFAULT_PINNED_MODELS) {
 			defaultPinnedModelIds = (config?.DEFAULT_PINNED_MODELS).split(',').filter((id) => id);
@@ -112,6 +114,11 @@
 		promptSuggestions = $_config?.default_prompt_suggestions ?? [];
 	};
 	const submitHandler = async () => {
+		if (forceUserDefaultModels && defaultModelIds.length !== 1) {
+			toast.error('开启强制模式时，请只选择一个默认模型作为普通用户对话模型');
+			return;
+		}
+
 		loading = true;
 
 		const metadata = {
@@ -122,6 +129,7 @@
 
 		const res = await setModelsConfig(localStorage.token, {
 			DEFAULT_MODELS: defaultModelIds.join(','),
+			FORCE_USER_DEFAULT_MODELS: forceUserDefaultModels,
 			DEFAULT_PINNED_MODELS: defaultPinnedModelIds.join(','),
 			MODEL_ORDER_LIST: modelIds,
 			DEFAULT_MODEL_METADATA: metadata,
@@ -230,13 +238,32 @@
 								<div class="w-full h-full overflow-y-auto overflow-x-hidden scrollbar-hidden">
 									{#if selectedTab === 'defaults'}
 										<ModelSelector
-											title={$i18n.t('Selected Models')}
-											tooltip={$i18n.t(
-												'Set the default models that are automatically selected for all users when a new chat is created.'
-											)}
+											title="用户默认对话模型"
+											tooltip="设置普通用户新建对话时默认使用的模型。开启强制模式后，普通用户将只能使用这里选择的唯一模型。"
 											models={$models}
 											bind:modelIds={defaultModelIds}
 										/>
+
+										<div class="mt-2 rounded-xl border border-gray-100 dark:border-gray-800 p-3">
+											<label class="flex items-center gap-2 text-sm cursor-pointer">
+												<input
+													type="checkbox"
+													class="rounded border-gray-300 dark:border-gray-700"
+													bind:checked={forceUserDefaultModels}
+												/>
+												<span class="font-medium">强制普通用户使用该默认模型</span>
+											</label>
+
+											<div class="mt-2 text-xs text-gray-500 leading-5">
+												开启后，普通用户新建或进入对话时会自动切换到管理员指定的默认模型；请确保只选择一个默认模型，并为该模型配置普通用户可读权限，否则普通用户可能无法正常发起对话。
+											</div>
+
+											{#if forceUserDefaultModels && defaultModelIds.length !== 1}
+												<div class="mt-2 text-xs text-red-500">
+													当前强制模式要求且只能要求选择一个默认模型。
+												</div>
+											{/if}
+										</div>
 
 										<hr class=" border-gray-50 dark:border-gray-800/10 my-2.5 w-full" />
 

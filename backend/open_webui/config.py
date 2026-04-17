@@ -1166,6 +1166,12 @@ DEFAULT_LOCALE = PersistentConfig(
 
 DEFAULT_MODELS = PersistentConfig('DEFAULT_MODELS', 'ui.default_models', os.environ.get('DEFAULT_MODELS', None))
 
+FORCE_USER_DEFAULT_MODELS = PersistentConfig(
+    'FORCE_USER_DEFAULT_MODELS',
+    'ui.force_user_default_models',
+    os.environ.get('FORCE_USER_DEFAULT_MODELS', 'False').lower() == 'true',
+)
+
 DEFAULT_PINNED_MODELS = PersistentConfig(
     'DEFAULT_PINNED_MODELS',
     'ui.default_pinned_models',

@@ -136,6 +136,27 @@
 	let selectedModels = [''];
 	let atSelectedModel: Model | undefined;
 	let selectedModelIds = [];
+
+	const getForcedUserDefaultModels = () => {
+		if ($user?.role === 'admin' || !($config?.force_user_default_models ?? false)) {
+			return [];
+		}
+
+		const availableModels = $models
+			.filter((m) => !(m?.info?.meta?.hidden ?? false))
+			.map((m) => m.id);
+		const defaultModels = $config?.default_models ? $config.default_models.split(',').filter((id) => id) : [];
+
+		return defaultModels.filter((modelId) => availableModels.includes(modelId)).slice(0, 1);
+	};
+
+	$: {
+		const forcedModels = getForcedUserDefaultModels();
+		if (forcedModels.length > 0 && JSON.stringify(selectedModels) !== JSON.stringify(forcedModels)) {
+			selectedModels = forcedModels;
+		}
+	}
+
 	$: if (atSelectedModel !== undefined) {
 		selectedModelIds = [atSelectedModel.id];
 	} else {
@@ -1053,8 +1074,12 @@
 			.map((m) => m.id);
 
 		const defaultModels = $config?.default_models ? $config?.default_models.split(',') : [];
+		const forcedModels = getForcedUserDefaultModels();
+		const forceUserDefaultModels = forcedModels.length > 0;
 
-		if ($page.url.searchParams.get('models') || $page.url.searchParams.get('model')) {
+		if (forceUserDefaultModels) {
+			selectedModels = forcedModels;
+		} else if ($page.url.searchParams.get('models') || $page.url.searchParams.get('model')) {
 			const urlModels = (
 				$page.url.searchParams.get('models') ||
 				$page.url.searchParams.get('model') ||
