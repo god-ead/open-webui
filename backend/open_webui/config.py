@@ -1180,31 +1180,16 @@ except Exception as e:
 if default_prompt_suggestions == []:
     default_prompt_suggestions = [
         {
-            'title': ['Help me study', 'vocabulary for a college entrance exam'],
-            'content': "Help me study vocabulary: write a sentence for me to fill in the blank, and I'll try to pick the correct option.",
+            'title': ['生成一份', '客户拜访准备表'],
+            'content': '请先不要直接输出结果，而是先向我补问生成拜访准备表所必需的关键信息。等信息足够后，再帮我输出完整的《客户拜访准备与沟通计划》。',
         },
         {
-            'title': ['Give me ideas', "for what to do with my kids' art"],
-            'content': "What are 5 creative things I could do with my kids' art? I don't want to throw them away, but it's also so much clutter.",
+            'title': ['把这段记录', '整理成销售纪要'],
+            'content': "请把我接下来提供的聊天记录、会议记录或拜访记录，整理成一份简洁清晰的销售沟通纪要，并提炼下一步跟进动作。",
         },
         {
-            'title': ['Tell me a fun fact', 'about the Roman Empire'],
-            'content': 'Tell me a random fun fact about the Roman Empire',
-        },
-        {
-            'title': ['Show me a code snippet', "of a website's sticky header"],
-            'content': "Show me a code snippet of a website's sticky header in CSS and JavaScript.",
-        },
-        {
-            'title': [
-                'Explain options trading',
-                "if I'm familiar with buying and selling stocks",
-            ],
-            'content': "Explain options trading in simple terms if I'm familiar with buying and selling stocks.",
-        },
-        {
-            'title': ['Overcome procrastination', 'give me tips'],
-            'content': 'Could you start by asking me about instances when I procrastinate the most and then give me some suggestions to overcome it?',
+            'title': ['帮我写一版', "客户沟通后的总结"],
+            'content': "请根据我提供的客户沟通情况，帮我写一版发给客户或内部同事的总结内容，要求重点明确、专业简洁。",
         },
     ]
 

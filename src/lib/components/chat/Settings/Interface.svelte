@@ -1278,45 +1278,47 @@
 				</div>
 			</div>
 
-			<div class=" my-2 text-sm font-medium">{$i18n.t('Voice')}</div>
+			{#if $user?.role === 'admin'}
+				<div class=" my-2 text-sm font-medium">{$i18n.t('Voice')}</div>
 
-			<div>
-				<div class=" py-0.5 flex w-full justify-between">
-					<div class=" self-center text-xs" id="allow-voice-interruption-in-call-label">
-						{$i18n.t('Allow Voice Interruption in Call')}
-					</div>
+				<div>
+					<div class=" py-0.5 flex w-full justify-between">
+						<div class=" self-center text-xs" id="allow-voice-interruption-in-call-label">
+							{$i18n.t('Allow Voice Interruption in Call')}
+						</div>
 
-					<div class="flex items-center gap-2 p-1">
-						<Switch
-							ariaLabelledbyId="allow-voice-interruption-in-call-label"
-							tooltip={true}
-							bind:state={voiceInterruption}
-							on:change={() => {
-								saveSettings({ voiceInterruption });
-							}}
-						/>
-					</div>
-				</div>
-			</div>
-
-			<div>
-				<div class=" py-0.5 flex w-full justify-between">
-					<div id="display-emoji-label" class=" self-center text-xs">
-						{$i18n.t('Display Emoji in Call')}
-					</div>
-
-					<div class="flex items-center gap-2 p-1">
-						<Switch
-							ariaLabelledbyId="display-emoji-label"
-							tooltip={true}
-							bind:state={showEmojiInCall}
-							on:change={() => {
-								saveSettings({ showEmojiInCall });
-							}}
-						/>
+						<div class="flex items-center gap-2 p-1">
+							<Switch
+								ariaLabelledbyId="allow-voice-interruption-in-call-label"
+								tooltip={true}
+								bind:state={voiceInterruption}
+								on:change={() => {
+									saveSettings({ voiceInterruption });
+								}}
+							/>
+						</div>
 					</div>
 				</div>
-			</div>
+
+				<div>
+					<div class=" py-0.5 flex w-full justify-between">
+						<div id="display-emoji-label" class=" self-center text-xs">
+							{$i18n.t('Display Emoji in Call')}
+						</div>
+
+						<div class="flex items-center gap-2 p-1">
+							<Switch
+								ariaLabelledbyId="display-emoji-label"
+								tooltip={true}
+								bind:state={showEmojiInCall}
+								on:change={() => {
+									saveSettings({ showEmojiInCall });
+								}}
+							/>
+						</div>
+					</div>
+				</div>
+			{/if}
 
 			<div class=" my-2 text-sm font-medium">{$i18n.t('File')}</div>
 

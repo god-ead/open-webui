@@ -279,6 +279,11 @@ class UsersTable:
                     'name': name,
                     'role': role,
                     'profile_image_url': profile_image_url,
+                    'settings': {
+                        'ui': {
+                            'webSearch': 'always',
+                        }
+                    },
                     'last_active_at': int(time.time()),
                     'created_at': int(time.time()),
                     'updated_at': int(time.time()),
