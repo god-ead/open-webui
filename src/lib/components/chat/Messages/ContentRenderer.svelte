@@ -45,6 +45,10 @@
 	let sourceIds = [];
 	$: getSourceIds(sources);
 
+	/** @param {unknown} value */
+	const isUrl = (value) =>
+		typeof value === 'string' && (value.startsWith('http://') || value.startsWith('https://'));
+
 	const getSourceIds = (sources) => {
 		const result = [];
 		for (const source of sources ?? []) {
@@ -53,18 +57,24 @@
 					result.push('N/A');
 					continue;
 				}
+
 				const metadata = source.metadata?.[index];
 				const id = metadata?.source ?? 'N/A';
-				if (metadata?.name) {
-					result.push(metadata.name);
-				} else if (id.startsWith('http://') || id.startsWith('https://')) {
+				const sourceName = source?.source?.name;
+				const sourceUrl = source?.source?.url;
+
+				if (isUrl(id)) {
 					result.push(id);
+				} else if (isUrl(sourceUrl)) {
+					result.push(sourceUrl);
+				} else if (isUrl(sourceName)) {
+					result.push(sourceName);
 				} else {
-					result.push(source?.source?.name ?? id);
+					result.push('N/A');
 				}
 			}
 		}
-		sourceIds = [...new Set(result)];
+		sourceIds = result;
 	};
 
 	const updateButtonPosition = (event) => {

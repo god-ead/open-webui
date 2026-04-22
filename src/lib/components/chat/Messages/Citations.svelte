@@ -22,6 +22,13 @@
 	let showCitationModal = false;
 
 	let selectedCitation: any = null;
+	let visibleCitations: any[] = [];
+
+	const isUrl = (value: unknown) =>
+		typeof value === 'string' && (value.startsWith('http://') || value.startsWith('https://'));
+
+	const isVisibleCitation = (citation: any) =>
+		isUrl(citation?.source?.url) || isUrl(citation?.source?.name) || isUrl(citation?.id);
 
 	export const showSourceModal = (sourceId) => {
 		let index;
@@ -137,6 +144,7 @@
 			return acc;
 		}, []);
 		console.log('citations', citations);
+		visibleCitations = citations.filter(isVisibleCitation);
 
 		showRelevance = calculateShowRelevance(citations);
 		showPercentage = shouldShowPercentage(citations);
@@ -158,14 +166,14 @@
 	{showRelevance}
 />
 
-{#if citations.length > 0}
-	{@const urlCitations = citations.filter((c) => c?.source?.name?.startsWith('http'))}
+{#if visibleCitations.length > 0}
+	{@const urlCitations = visibleCitations.filter((c) => isUrl(c?.source?.name) || isUrl(c?.source?.url))}
 	<div class=" py-1 -mx-0.5 w-full flex gap-1 items-center flex-wrap">
 		<button
 			class="text-xs font-medium text-gray-600 dark:text-gray-300 px-3.5 h-8 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 transition flex items-center gap-1 border border-gray-50 dark:border-gray-850/30"
-			aria-label={citations.length === 1
+			aria-label={visibleCitations.length === 1
 				? $i18n.t('Toggle 1 source')
-				: $i18n.t('Toggle {{COUNT}} sources', { COUNT: citations.length })}
+				: $i18n.t('Toggle {{COUNT}} sources', { COUNT: visibleCitations.length })}
 			aria-expanded={showCitations}
 			on:click={() => {
 				showCitations = !showCitations;
@@ -186,11 +194,11 @@
 				</div>
 			{/if}
 			<div>
-				{#if citations.length === 1}
+				{#if visibleCitations.length === 1}
 					{$i18n.t('1 Source')}
 				{:else}
 					{$i18n.t('{{COUNT}} Sources', {
-						COUNT: citations.length
+						COUNT: visibleCitations.length
 					})}
 				{/if}
 			</div>
@@ -198,10 +206,10 @@
 	</div>
 {/if}
 
-{#if showCitations}
+{#if showCitations && visibleCitations.length > 0}
 	<div class="py-1.5">
 		<div class="text-xs gap-2 flex flex-col">
-			{#each citations as citation, idx}
+			{#each visibleCitations as citation, idx}
 				<button
 					id={`source-${id}-${idx + 1}`}
 					aria-label={$i18n.t('View source: {{name}}', {

@@ -28,13 +28,14 @@
 	import AccessControlModal from '../common/AccessControlModal.svelte';
 	import LockClosed from '$lib/components/icons/LockClosed.svelte';
 	import { updateModelAccessGrants } from '$lib/apis/models';
+	import ModelSelector from '$lib/components/admin/Settings/Models/ModelSelector.svelte';
 
 	const i18n = getContext('i18n');
 
 	export let onSubmit: Function;
 	export let onBack: null | Function = null;
 
-	export let model = null;
+	export let model: any = null;
 	export let edit = false;
 
 	export let preset = true;
@@ -70,7 +71,7 @@
 	}
 
 	let system = '';
-	let info = {
+	let info: any = {
 		id: '',
 		base_model_id: null,
 		name: '',
@@ -78,7 +79,8 @@
 			profile_image_url: `${WEBUI_BASE_URL}/static/favicon.png`,
 			description: '',
 			suggestion_prompts: null,
-			tags: []
+			tags: [],
+			fallback_model_ids: []
 		},
 		params: {
 			system: ''
@@ -135,6 +137,12 @@
 
 		info.access_grants = accessGrants;
 		info.meta.capabilities = capabilities;
+		info.meta.fallback_model_ids = (info.meta.fallback_model_ids ?? []).filter(
+			(modelId: string) => modelId && modelId !== info.base_model_id
+		);
+		if (info.meta.fallback_model_ids.length === 0) {
+			delete info.meta.fallback_model_ids;
+		}
 
 		if (enableDescription) {
 			info.meta.description = info.meta.description.trim() === '' ? null : info.meta.description;
@@ -333,6 +341,7 @@
 					)
 				)
 			};
+			info.meta.fallback_model_ids = info.meta.fallback_model_ids ?? [];
 
 			console.log(model);
 		}
@@ -603,11 +612,28 @@
 											<option value={null} class=" text-gray-900"
 												>{$i18n.t('Select a base model')}</option
 											>
-											{#each $models.filter((m) => (model ? m.id !== model.id : true) && !m?.preset && m?.owned_by !== 'arena' && !(m?.direct ?? false)) as model}
-												<option value={model.id} class=" text-gray-900">{model.name}</option>
+											{#each $models.filter((m: any) => (model ? m.id !== model.id : true) && !m?.preset && m?.owned_by !== 'arena' && !(m?.direct ?? false)) as baseModel}
+												<option value={baseModel.id} class=" text-gray-900">{baseModel.name}</option>
 											{/each}
 										</select>
 									</div>
+								</div>
+							{/if}
+
+							{#if preset}
+								<div class="mb-1">
+									<ModelSelector
+										title="备用模型"
+										tooltip="默认模型失败时，将按这里的顺序依次尝试备用模型。"
+										models={$models.filter((m: any) =>
+											(model ? m.id !== model.id : true) &&
+											m.id !== info.base_model_id &&
+											!m?.preset &&
+											m?.owned_by !== 'arena' &&
+											!(m?.direct ?? false)
+										)}
+										bind:modelIds={info.meta.fallback_model_ids}
+									/>
 								</div>
 							{/if}
 

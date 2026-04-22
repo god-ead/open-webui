@@ -13,6 +13,7 @@ from uuid import uuid4
 
 
 from contextlib import asynccontextmanager
+from copy import deepcopy
 from urllib.parse import urlencode, parse_qs, urlparse
 from pydantic import BaseModel
 from sqlalchemy import text
@@ -528,6 +529,7 @@ from open_webui.utils.actions import chat_action as chat_action_handler
 from open_webui.utils.embeddings import generate_embeddings
 from open_webui.utils.middleware import (
     build_chat_response_context,
+    get_response_data,
     process_chat_payload,
     process_chat_response,
 )
@@ -1634,6 +1636,63 @@ async def embeddings(request: Request, form_data: dict, user=Depends(get_verifie
     return await generate_embeddings(request, form_data, user)
 
 
+def get_custom_model_fallback_model_ids(model_info, available_models: dict) -> list[str]:
+    if not model_info or not model_info.meta:
+        return []
+
+    meta = model_info.meta.model_dump() if hasattr(model_info.meta, 'model_dump') else model_info.meta
+    fallback_model_ids = meta.get('fallback_model_ids') if isinstance(meta, dict) else None
+    if not isinstance(fallback_model_ids, list):
+        return []
+
+    valid_model_ids = []
+    for fallback_model_id in fallback_model_ids:
+        if not isinstance(fallback_model_id, str) or not fallback_model_id:
+            continue
+        if fallback_model_id == model_info.base_model_id or fallback_model_id not in available_models:
+            continue
+        if fallback_model_id not in valid_model_ids:
+            valid_model_ids.append(fallback_model_id)
+
+    return valid_model_ids
+
+
+def get_chat_response_error(response) -> Optional[str]:
+    if isinstance(response, StreamingResponse):
+        return f'HTTP {response.status_code}' if response.status_code >= 400 else None
+
+    if isinstance(response, Response) and getattr(response, 'status_code', 200) >= 400:
+        body = getattr(response, 'body', b'')
+        if isinstance(body, bytes):
+            return body.decode('utf-8', 'replace') or f'HTTP {response.status_code}'
+        return str(body) or f'HTTP {response.status_code}'
+
+    _, response_data = get_response_data(response)
+    if not isinstance(response_data, dict) or 'error' not in response_data:
+        return None
+
+    error = response_data.get('error')
+    if isinstance(error, dict):
+        detail = error.get('detail') or error.get('message') or error
+        return str(detail)
+    return str(error)
+
+
+def get_chat_model_attempt_ids(model_info, fallback_model_ids: list[str], available_models: dict) -> list[Optional[str]]:
+    if not model_info or not model_info.base_model_id:
+        return [None]
+
+    attempt_model_ids = []
+    if model_info.base_model_id in available_models:
+        attempt_model_ids.append(model_info.base_model_id)
+
+    for fallback_model_id in fallback_model_ids:
+        if fallback_model_id in available_models and fallback_model_id not in attempt_model_ids:
+            attempt_model_ids.append(fallback_model_id)
+
+    return attempt_model_ids or [None]
+
+
 @app.post('/api/chat/completions')
 @app.post('/api/v1/chat/completions')  # Experimental: Compatibility with OpenAI API
 async def chat_completion(
@@ -1677,11 +1736,15 @@ async def chat_completion(
             **(model_info.params.model_dump() if model_info and model_info.params else {}),
         }
 
+        fallback_model_ids = get_custom_model_fallback_model_ids(model_info, request.app.state.MODELS)
+
         # Check base model existence for custom models
         if model_info and model_info.base_model_id:
             base_model_id = model_info.base_model_id
             if base_model_id not in request.app.state.MODELS:
-                if ENABLE_CUSTOM_MODEL_FALLBACK:
+                if fallback_model_ids:
+                    request.base_model_id = fallback_model_ids[0]
+                elif ENABLE_CUSTOM_MODEL_FALLBACK:
                     default_models = (request.app.state.config.DEFAULT_MODELS or '').split(',')
 
                     fallback_model_id = default_models[0].strip() if default_models[0] else None
@@ -1781,26 +1844,75 @@ async def chat_completion(
 
     async def process_chat(request, form_data, user, metadata, model):
         try:
-            form_data, metadata, events = await process_chat_payload(request, form_data, user, metadata, model)
+            base_form_data = deepcopy(form_data)
+            base_metadata = deepcopy(metadata)
+            attempt_model_ids = get_chat_model_attempt_ids(
+                model_info,
+                fallback_model_ids,
+                request.app.state.MODELS,
+            )
 
-            response = await chat_completion_handler(request, form_data, user)
-            if metadata.get('chat_id') and metadata.get('message_id'):
+            last_error = None
+            for attempt_idx, attempt_base_model_id in enumerate(attempt_model_ids):
+                attempt_form_data = deepcopy(base_form_data)
+                attempt_metadata = deepcopy(base_metadata)
+
+                if attempt_base_model_id:
+                    request.base_model_id = attempt_base_model_id
+                elif hasattr(request, 'base_model_id'):
+                    delattr(request, 'base_model_id')
+
+                request.state.metadata = attempt_metadata
+                attempt_form_data['metadata'] = attempt_metadata
+
                 try:
-                    if not metadata['chat_id'].startswith('local:'):
-                        Chats.upsert_message_to_chat_by_id_and_message_id(
-                            metadata['chat_id'],
-                            metadata['message_id'],
-                            {
+                    attempt_form_data, attempt_metadata, events = await process_chat_payload(
+                        request, attempt_form_data, user, attempt_metadata, model
+                    )
+
+                    response = await chat_completion_handler(request, attempt_form_data, user)
+                    last_error = get_chat_response_error(response)
+                except Exception as e:
+                    last_error = str(e)
+                    if attempt_idx < len(attempt_model_ids) - 1:
+                        log.warning(
+                            f'Custom model {model_id} failed with {attempt_base_model_id}: {last_error}. Trying fallback model.'
+                        )
+                        continue
+                    raise
+
+                if last_error and attempt_idx < len(attempt_model_ids) - 1:
+                    log.warning(
+                        f'Custom model {model_id} failed with {attempt_base_model_id}: {last_error}. Trying fallback model.'
+                    )
+                    continue
+
+                form_data = attempt_form_data
+                metadata = attempt_metadata
+
+                if metadata.get('chat_id') and metadata.get('message_id'):
+                    try:
+                        if not metadata['chat_id'].startswith('local:'):
+                            update_data = {
                                 'parentId': metadata.get('parent_message_id', None),
                                 'model': model_id,
-                            },
-                        )
-                except Exception:
-                    pass
+                            }
+                            if attempt_base_model_id and attempt_base_model_id != model_info.base_model_id:
+                                update_data['fallbackModelId'] = attempt_base_model_id
 
-            ctx = build_chat_response_context(request, form_data, user, model, metadata, tasks, events)
+                            Chats.upsert_message_to_chat_by_id_and_message_id(
+                                metadata['chat_id'],
+                                metadata['message_id'],
+                                update_data,
+                            )
+                    except Exception:
+                        pass
 
-            return await process_chat_response(response, ctx)
+                ctx = build_chat_response_context(request, form_data, user, model, metadata, tasks, events)
+
+                return await process_chat_response(response, ctx)
+
+            raise Exception(last_error or 'Model not found')
         except asyncio.CancelledError:
             log.info('Chat processing was cancelled')
             try:

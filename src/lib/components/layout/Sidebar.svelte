@@ -1062,7 +1062,7 @@
 						id="sidebar-models"
 						bind:open={showPinnedModels}
 						className="px-2 mt-0.5"
-						name={$i18n.t('Models')}
+						name="助手"
 						chevron={false}
 						dragAndDrop={false}
 					>

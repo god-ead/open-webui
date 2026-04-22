@@ -271,10 +271,12 @@ async def generate_chat_completion(
                     'selected_model_id': selected_model_id,
                 }
 
-        if model.get('pipe'):
+        routing_model = models.get(getattr(request, 'base_model_id', None), model)
+
+        if routing_model.get('pipe'):
             # Below does not require bypass_filter because this is the only route the uses this function and it is already bypassing the filter
             return await generate_function_chat_completion(request, form_data, user=user, models=models)
-        if model.get('owned_by') == 'ollama':
+        if routing_model.get('owned_by') == 'ollama':
             # Using /ollama/api/chat endpoint
             form_data = convert_payload_openai_to_ollama(form_data)
             response = await generate_ollama_chat_completion(
