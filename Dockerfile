@@ -1,49 +1,54 @@
-# syntax=docker/dockerfile:1
+# syntax=docker.fzyun.io/docker/dockerfile:1
 # 初始化设备类型参数
-# 在 docker build 命令中通过 --build-arg="BUILDARG=true" 使用构建参数
 ARG USE_CUDA=false
 ARG USE_OLLAMA=false
 ARG USE_SLIM=false
 ARG USE_PERMISSION_HARDENING=false
-# 已测试：CUDA 11 使用 cu117，CUDA 12 使用 cu121（默认）
+# CUDA 11 使用 cu117，CUDA 12 使用 cu121（默认）
 ARG USE_CUDA_VER=cu128
-# 可使用任意 sentence-transformers 模型；可选模型见 https://huggingface.co/models?library=sentence-transformers
-# 排行榜：https://huggingface.co/spaces/mteb/leaderboard
-# 若需更好的性能和多语言支持，可使用 "intfloat/multilingual-e5-large"（约 2.5GB）或 "intfloat/multilingual-e5-base"（约 1.5GB）
-# 重要：如果你切换嵌入模型（如 sentence-transformers/all-MiniLM-L6-v2）或切回原模型，将无法继续对 WebUI 中之前加载的文档使用 RAG Chat，必须重新生成嵌入。
+# 可使用任意 sentence-transformers 模型
+# 重要：如果切换嵌入模型（如 sentence-transformers/all-MiniLM-L6-v2）或切回原模型，将无法继续对 WebUI 中之前加载的文档使用 RAG Chat，必须重新生成嵌入。
 ARG USE_EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
 ARG USE_RERANKING_MODEL=""
 ARG USE_AUXILIARY_EMBEDDING_MODEL=TaylorAI/bge-micro-v2
 
-# Tiktoken 编码名称；可选模型见 https://huggingface.co/models?library=tiktoken
+# Tiktoken 编码名称
 ARG USE_TIKTOKEN_ENCODING_NAME="cl100k_base"
 
 ARG BUILD_HASH=dev-build
-# 如需覆盖请自行承担风险，非 root 配置尚未经过验证
 ARG UID=0
 ARG GID=0
 
 ######## WebUI 前端 ########
-FROM --platform=$BUILDPLATFORM node:22-alpine3.20 AS build
+FROM --platform=$BUILDPLATFORM docker.fzyun.io/library/node:22-alpine3.20 AS build
 ARG BUILD_HASH
+ARG ALPINE_MIRROR
+ARG NPM_REGISTRY
 
 # 设置 Node.js 选项（用于避免堆内存限制导致 Allocation failed / JavaScript heap out of memory）
-# ENV NODE_OPTIONS="--max-old-space-size=4096"
+ENV NODE_OPTIONS="--max-old-space-size=4096"
 
 WORKDIR /app
 
 # 在构建过程中保存 git 修订版本信息
-RUN apk add --no-cache git
+RUN if [ -n "$ALPINE_MIRROR" ]; then \
+    sed -i "s|https://dl-cdn.alpinelinux.org/alpine|$ALPINE_MIRROR|g" /etc/apk/repositories; \
+    fi && \
+    apk add --no-cache git
 
 COPY package.json package-lock.json ./
-RUN npm ci --force
+RUN if [ -n "$NPM_REGISTRY" ]; then \
+    npm ci --force --registry "$NPM_REGISTRY"; \
+    else \
+    npm ci --force; \
+    fi
 
 COPY . .
 ENV APP_BUILD_HASH=${BUILD_HASH}
 RUN npm run build
 
 ######## WebUI 后端 ########
-FROM python:3.11.14-slim-bookworm AS base
+FROM docker.fzyun.io/library/python:3.11.14-slim-bookworm AS base
 
 # 使用构建参数
 ARG USE_CUDA
@@ -56,6 +61,12 @@ ARG USE_RERANKING_MODEL
 ARG USE_AUXILIARY_EMBEDDING_MODEL
 ARG UID
 ARG GID
+ARG APT_MIRROR
+ARG PIP_MIRROR
+ARG PYTORCH_CPU_INDEX_URL
+ARG PYTORCH_CUDA_INDEX_URL
+ARG HF_ENDPOINT
+ARG NLTK_DATA_INDEX_URL
 
 # Python 设置
 ENV PYTHONUNBUFFERED=1
@@ -124,7 +135,10 @@ RUN echo -n 00000000-0000-0000-0000-000000000000 > $HOME/.cache/chroma/telemetry
 RUN chown -R $UID:$GID /app $HOME
 
 # 安装通用系统依赖
-RUN apt-get update && \
+RUN if [ -n "$APT_MIRROR" ]; then \
+    sed -i "s|http://deb.debian.org/debian-security|$APT_MIRROR-security|g; s|http://security.debian.org/debian-security|$APT_MIRROR-security|g; s|http://deb.debian.org/debian|$APT_MIRROR|g; s|https://deb.debian.org/debian-security|$APT_MIRROR-security|g; s|https://security.debian.org/debian-security|$APT_MIRROR-security|g; s|https://deb.debian.org/debian|$APT_MIRROR|g" /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true; \
+    fi && \
+    apt-get update && \
     apt-get install -y --no-install-recommends \
     git build-essential pandoc gcc netcat-openbsd curl jq \
     libmariadb-dev \
@@ -136,29 +150,38 @@ RUN apt-get update && \
 COPY --chown=$UID:$GID ./backend/requirements.txt ./requirements.txt
 
 RUN set -e; \
+    if [ -n "$PIP_MIRROR" ]; then export PIP_INDEX_URL="$PIP_MIRROR" UV_INDEX_URL="$PIP_MIRROR" UV_DEFAULT_INDEX="$PIP_MIRROR"; fi; \
+    if [ -n "$HF_ENDPOINT" ]; then export HF_ENDPOINT; fi; \
+    if [ -n "$NLTK_DATA_INDEX_URL" ]; then export NLTK_DATA_INDEX_URL; fi; \
     pip3 install --no-cache-dir uv; \
     if [ "$USE_CUDA" = "true" ]; then \
     # 如果启用 CUDA，Whisper 和嵌入模型会在首次使用时下载
     # 修复：固定 torch<=2.9.1，torch 2.10.0 的 aarch64 wheel 会在 ARM 设备（RPi 4 Cortex-A72）上触发 SIGILL，见 #21349
-    pip3 install 'torch<=2.9.1' torchvision torchaudio --index-url https://download.pytorch.org/whl/$USE_CUDA_DOCKER_VER --no-cache-dir; \
+    torch_index_url="${PYTORCH_CUDA_INDEX_URL:-https://download.pytorch.org/whl/$USE_CUDA_DOCKER_VER}"; \
+    pip3 install 'torch<=2.9.1' torchvision torchaudio --index-url "$torch_index_url" --no-cache-dir; \
     uv pip install --system -r requirements.txt --no-cache-dir; \
     python -c "import os; from sentence_transformers import SentenceTransformer; SentenceTransformer(os.environ['RAG_EMBEDDING_MODEL'], device='cpu')"; \
     python -c "import os; from sentence_transformers import SentenceTransformer; SentenceTransformer(os.environ.get('AUXILIARY_EMBEDDING_MODEL', 'TaylorAI/bge-micro-v2'), device='cpu')"; \
     python -c "import os; from faster_whisper import WhisperModel; WhisperModel(os.environ['WHISPER_MODEL'], device='cpu', compute_type='int8', download_root=os.environ['WHISPER_MODEL_DIR'])"; \
     python -c "import os; import tiktoken; tiktoken.get_encoding(os.environ['TIKTOKEN_ENCODING_NAME'])"; \
-    python -c "import nltk; nltk.download('punkt_tab')"; \
+    python -c "import os, nltk; from nltk.downloader import Downloader; index=os.environ.get('NLTK_DATA_INDEX_URL'); (Downloader(server_index_url=index).download('punkt_tab') if index else nltk.download('punkt_tab'))"; \
     else \
-    pip3 install 'torch<=2.9.1' torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu --no-cache-dir; \
+    torch_index_url="${PYTORCH_CPU_INDEX_URL:-https://download.pytorch.org/whl/cpu}"; \
+    pip3 install 'torch<=2.9.1' torchvision torchaudio --index-url "$torch_index_url" --no-cache-dir; \
     uv pip install --system -r requirements.txt --no-cache-dir; \
     if [ "$USE_SLIM" != "true" ]; then \
     python -c "import os; from sentence_transformers import SentenceTransformer; SentenceTransformer(os.environ['RAG_EMBEDDING_MODEL'], device='cpu')"; \
     python -c "import os; from sentence_transformers import SentenceTransformer; SentenceTransformer(os.environ.get('AUXILIARY_EMBEDDING_MODEL', 'TaylorAI/bge-micro-v2'), device='cpu')"; \
     python -c "import os; from faster_whisper import WhisperModel; WhisperModel(os.environ['WHISPER_MODEL'], device='cpu', compute_type='int8', download_root=os.environ['WHISPER_MODEL_DIR'])"; \
     python -c "import os; import tiktoken; tiktoken.get_encoding(os.environ['TIKTOKEN_ENCODING_NAME'])"; \
-    python -c "import nltk; nltk.download('punkt_tab')"; \
+    python -c "import os, nltk; from nltk.downloader import Downloader; index=os.environ.get('NLTK_DATA_INDEX_URL'); (Downloader(server_index_url=index).download('punkt_tab') if index else nltk.download('punkt_tab'))"; \
     fi; \
     fi; \
-    mkdir -p /app/backend/data; chown -R $UID:$GID /app/backend/data/; \
+    playwright install chromium; \
+    playwright install-deps chromium; \
+    mkdir -p /app/backend/preload; \
+    if [ -d /app/backend/data/cache ]; then cp -a /app/backend/data/cache /app/backend/preload/cache; fi; \
+    mkdir -p /app/backend/data; chown -R $UID:$GID /app/backend/data/ /app/backend/preload/; \
     rm -rf /var/lib/apt/lists/*;
 
 # 如果启用，则安装 Ollama

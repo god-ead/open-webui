@@ -1,32 +1,37 @@
 services:
-  ollama:
-    volumes:
-      - ollama:/root/.ollama
-    container_name: ollama
-    pull_policy: always
-    tty: true
-    restart: unless-stopped
-    image: ollama/ollama:${OLLAMA_DOCKER_TAG-latest}
-
+  # Open WebUI 主服务容器。
+  # 作用：运行构建后的前端静态资源与 FastAPI 后端，容器内监听 8080。
+  # 当前配置不启动内置/本地 Ollama
   open-webui:
+    # 从当前目录的 Dockerfile 构建生产镜像。
     build:
       context: .
       dockerfile: Dockerfile
-    image: ghcr.io/open-webui/open-webui:${WEBUI_DOCKER_TAG-main}
+      args:
+        ALPINE_MIRROR: ${OPEN_WEBUI_ALPINE_MIRROR:-}
+        APT_MIRROR: ${OPEN_WEBUI_APT_MIRROR:-}
+        NPM_REGISTRY: ${OPEN_WEBUI_NPM_REGISTRY:-}
+        PIP_MIRROR: ${OPEN_WEBUI_PIP_MIRROR:-}
+        PYTORCH_CPU_INDEX_URL: ${OPEN_WEBUI_PYTORCH_CPU_INDEX_URL:-}
+        PYTORCH_CUDA_INDEX_URL: ${OPEN_WEBUI_PYTORCH_CUDA_INDEX_URL:-}
+        HF_ENDPOINT: ${OPEN_WEBUI_HF_ENDPOINT:-}
+        NLTK_DATA_INDEX_URL: ${OPEN_WEBUI_NLTK_DATA_INDEX_URL:-}
+    # 镜像名可在 .env 中设置：
+    image: ${OPEN_WEBUI_IMAGE-openwebui_product}:${WEBUI_DOCKER_TAG-local}
     container_name: open-webui
+    # 将运行期变量注入 open-webui 容器；构建/镜像源变量保留在 .env，不进入容器。
+    env_file:
+      - .env.runtime
+    # 持久化 Open WebUI 数据，并保存首次启动自动生成的 WEBUI_SECRET_KEY。
     volumes:
       - open-webui:/app/backend/data
-    depends_on:
-      - ollama
     ports:
-      - ${OPEN_WEBUI_PORT-3000}:8080
-    environment:
-      - 'OLLAMA_BASE_URL=http://ollama:11434'
-      - 'WEBUI_SECRET_KEY='
+      # 宿主机端口:容器端口。
+      - 0.0.0.0:${OPEN_WEBUI_PORT-3000}:8080
     extra_hosts:
+      # 允许容器通过 host.docker.internal 访问宿主机服务。
       - host.docker.internal:host-gateway
     restart: unless-stopped
 
 volumes:
-  ollama: {}
-  open-webui: {}
+  open-webui:

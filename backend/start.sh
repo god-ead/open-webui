@@ -5,17 +5,17 @@ SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 # 切换到后端目录，确保后续访问 .webui_secret_key、模块导入和相对文件路径时行为一致。
 cd "$SCRIPT_DIR" || exit
 
-# 按需安装 Playwright 浏览器依赖。
-# 只有当 WEB_LOADER_ENGINE=playwright 且没有提供远程 PLAYWRIGHT_WS_URL 时，
-# 才在当前环境中安装 Chromium 及其系统依赖。
-if [[ "${WEB_LOADER_ENGINE,,}" == "playwright" ]]; then
-    if [[ -z "${PLAYWRIGHT_WS_URL}" ]]; then
-        echo "Installing Playwright browsers..."
-        playwright install chromium
-        playwright install-deps chromium
-    fi
+# 如果镜像内预置了模型/分词缓存，先同步到持久化数据卷，避免空卷首次启动再联网下载。
+DATA_DIR="${DATA_DIR:-/app/backend/data}"
+PRELOAD_CACHE_DIR="${OPEN_WEBUI_PRELOAD_CACHE_DIR:-/app/backend/preload/cache}"
+if [ -d "$PRELOAD_CACHE_DIR" ]; then
+    mkdir -p "$DATA_DIR/cache"
+    cp -an "$PRELOAD_CACHE_DIR/." "$DATA_DIR/cache/"
+fi
 
-    # Playwright 抓取链路会依赖 NLTK 的 punkt_tab 数据，这里一并补齐。
+# Playwright 浏览器和系统依赖已在镜像构建阶段安装。
+# 启用本地 Playwright 抓取时，只补齐其依赖的 NLTK punkt_tab 数据。
+if [[ "${WEB_LOADER_ENGINE,,}" == "playwright" ]]; then
     python -c "import nltk; nltk.download('punkt_tab')"
 fi
 
