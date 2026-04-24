@@ -12,6 +12,17 @@ ARG USE_EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
 ARG USE_RERANKING_MODEL=""
 ARG USE_AUXILIARY_EMBEDDING_MODEL=TaylorAI/bge-micro-v2
 
+# 设置镜像源加速下载
+ARG ALPINE_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/alpine
+ARG APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/debian
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+ARG PIP_MIRROR=https://pypi.tuna.tsinghua.edu.cn/simple
+ARG HF_ENDPOINT=https://hf-mirror.com
+ARG PYTORCH_CPU_INDEX_URL
+ARG PYTORCH_CUDA_INDEX_URL
+ARG NLTK_DATA_INDEX_URL
+
+
 # Tiktoken 编码名称
 ARG USE_TIKTOKEN_ENCODING_NAME="cl100k_base"
 
@@ -24,6 +35,7 @@ FROM --platform=$BUILDPLATFORM docker.fzyun.io/library/node:22-alpine3.20 AS bui
 ARG BUILD_HASH
 ARG ALPINE_MIRROR
 ARG NPM_REGISTRY
+ARG BUILD_HASH
 
 # 设置 Node.js 选项（用于避免堆内存限制导致 Allocation failed / JavaScript heap out of memory）
 ENV NODE_OPTIONS="--max-old-space-size=4096"
@@ -61,6 +73,7 @@ ARG USE_RERANKING_MODEL
 ARG USE_AUXILIARY_EMBEDDING_MODEL
 ARG UID
 ARG GID
+
 ARG APT_MIRROR
 ARG PIP_MIRROR
 ARG PYTORCH_CPU_INDEX_URL
@@ -136,15 +149,19 @@ RUN chown -R $UID:$GID /app $HOME
 
 # 安装通用系统依赖
 RUN if [ -n "$APT_MIRROR" ]; then \
-    sed -i "s|http://deb.debian.org/debian-security|$APT_MIRROR-security|g; s|http://security.debian.org/debian-security|$APT_MIRROR-security|g; s|http://deb.debian.org/debian|$APT_MIRROR|g; s|https://deb.debian.org/debian-security|$APT_MIRROR-security|g; s|https://security.debian.org/debian-security|$APT_MIRROR-security|g; s|https://deb.debian.org/debian|$APT_MIRROR|g" /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true; \
+    sed -i "s|http://deb.debian.org/debian-security|$APT_MIRROR-security|g; \
+            s|http://security.debian.org/debian-security|$APT_MIRROR-security|g; \
+            s|http://deb.debian.org/debian|$APT_MIRROR|g; \
+            s|https://deb.debian.org/debian-security|$APT_MIRROR-security|g; \
+            s|https://security.debian.org/debian-security|$APT_MIRROR-security|g; \
+            s|https://deb.debian.org/debian|$APT_MIRROR|g" \
+        /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true; \
     fi && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
     git build-essential pandoc gcc netcat-openbsd curl jq \
-    libmariadb-dev \
-    python3-dev \
-    ffmpeg libsm6 libxext6 zstd \
-    && rm -rf /var/lib/apt/lists/*
+    libmariadb-dev python3-dev ffmpeg libsm6 libxext6 zstd && \
+    rm -rf /var/lib/apt/lists/*
 
 # 安装 Python 依赖
 COPY --chown=$UID:$GID ./backend/requirements.txt ./requirements.txt
