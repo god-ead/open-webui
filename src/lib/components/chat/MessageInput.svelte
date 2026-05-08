@@ -75,6 +75,7 @@
 	import FileItem from '../common/FileItem.svelte';
 	import Image from '../common/Image.svelte';
 	import Spinner from '../common/Spinner.svelte';
+	import VisitPreparationSheetTrigger from './VisitPreparationSheetTrigger.svelte';
 
 	import XMark from '../icons/XMark.svelte';
 	import GlobeAlt from '../icons/GlobeAlt.svelte';
@@ -1853,6 +1854,16 @@
 											</Tooltip>
 										</div>
 									{:else}
+										<div class="flex items-center">
+											<VisitPreparationSheetTrigger
+												draftPrompt={prompt}
+												disabled={uploadPending}
+												onSubmit={(preparedPrompt) => {
+													dispatch('submit', preparedPrompt);
+												}}
+											/>
+										</div>
+
 										{#if prompt !== '' && !history?.currentId && !$selectedTerminalId && ($config?.features?.enable_notes ?? false) && ($_user?.role === 'admin' || ($_user?.permissions?.features?.notes ?? true))}
 											<!-- {$i18n.t('Create Note')}  -->
 											<Tooltip content={$i18n.t('Create note')} className=" flex items-center">
