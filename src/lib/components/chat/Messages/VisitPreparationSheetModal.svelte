@@ -1,22 +1,44 @@
 <script lang="ts">
+	import { toast } from 'svelte-sonner';
+
 	import Modal from '$lib/components/common/Modal.svelte';
+	import ArrowDownTray from '$lib/components/icons/ArrowDownTray.svelte';
 	import XMark from '$lib/components/icons/XMark.svelte';
 
+	import { downloadVisitPreparationSheet } from '$lib/features/visitPreparationSheet/export';
 	import type { VisitPreparationSheetData } from '$lib/features/visitPreparationSheet/parse';
 
 	export let show = false;
 	export let sheet: VisitPreparationSheetData | null = null;
 
-	const topFields = ['客户单位', '所属行业/细分行业', '是否预约成功'] as const;
-	const summaryFields = ['合作项目', '客户及职务', '客户背景'] as const;
+	const topFields = ['基础信息-客户单位', '基础信息-所属行业/细分行业', '基础信息-是否预约成功'] as const;
+	const summaryFields = ['基础信息-合作项目', '基础信息-客户及职务', '基础信息-客户背景'] as const;
 	const preparationFields = ['认知期望', '拜访目标', '预约理由'] as const;
 	const communicationFields = [
-		'开场暖场',
-		'了解最新变化',
-		'了解认知期望',
-		'呈现差异优势'
+		'沟通过程-开场暖场',
+		'沟通过程-了解最新变化',
+		'沟通过程-了解认知期望',
+		'沟通过程-呈现差异优势'
 	] as const;
-	const followUpFields = ['获得行动承诺', '处理客户顾虑'] as const;
+	const followUpFields = ['后续计划-获得行动承诺', '后续计划-处理客户顾虑'] as const;
+
+	let downloading = false;
+
+	const handleDownload = async () => {
+		if (!sheet || downloading) {
+			return;
+		}
+
+		try {
+			downloading = true;
+			await downloadVisitPreparationSheet(sheet);
+		} catch (error) {
+			console.error('Failed to download visit preparation sheet', error);
+			toast.error('拜访准备表下载失败');
+		} finally {
+			downloading = false;
+		}
+	};
 </script>
 
 <Modal size="xl" bind:show>
@@ -24,20 +46,34 @@
 		<div class="flex items-center justify-between px-5 pt-4 pb-3 border-b border-gray-100 dark:border-gray-800">
 			<div>
 				<div class="text-lg font-semibold text-gray-900 dark:text-gray-100">拜访准备表</div>
-				<div class="text-sm text-gray-500 dark:text-gray-400">按模板结构整理的前端预览</div>
+				<div class="text-sm text-gray-500 dark:text-gray-400">按模板结构整理的预览表格</div>
 			</div>
 
-			<button
-				type="button"
-				aria-label="关闭拜访准备表"
-				title="关闭"
-				class="rounded-full p-1.5 text-gray-500 transition hover:bg-gray-100 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
-				on:click={() => {
-					show = false;
-				}}
-			>
-				<XMark className="size-5" />
-			</button>
+			<div class="flex items-center gap-2">
+				<button
+					type="button"
+					aria-label={downloading ? '正在导出拜访准备表' : '下载拜访准备表 xlsx'}
+					title={downloading ? '正在导出拜访准备表' : '下载拜访准备表 xlsx'}
+					class="inline-flex items-center gap-1.5 rounded-full border border-gray-200 px-3 py-1.5 text-sm text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800 dark:disabled:text-gray-500"
+					disabled={!sheet || downloading}
+					on:click={handleDownload}
+				>
+					<ArrowDownTray className="size-4" />
+					<span>{downloading ? '导出中...' : '下载 xlsx'}</span>
+				</button>
+
+				<button
+					type="button"
+					aria-label="关闭拜访准备表"
+					title="关闭"
+					class="rounded-full p-1.5 text-gray-500 transition hover:bg-gray-100 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
+					on:click={() => {
+						show = false;
+					}}
+				>
+					<XMark className="size-5" />
+				</button>
+			</div>
 		</div>
 
 		{#if sheet}
