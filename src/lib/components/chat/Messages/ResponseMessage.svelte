@@ -47,6 +47,7 @@
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import WebSearchResults from './ResponseMessage/WebSearchResults.svelte';
 	import Sparkles from '$lib/components/icons/Sparkles.svelte';
+	import DocumentCheck from '$lib/components/icons/DocumentCheck.svelte';
 
 	import DeleteConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
 
@@ -62,6 +63,12 @@
 	import RegenerateMenu from './ResponseMessage/RegenerateMenu.svelte';
 	import StatusHistory from './ResponseMessage/StatusHistory.svelte';
 	import FullHeightIframe from '$lib/components/common/FullHeightIframe.svelte';
+	import VisitPreparationSheetModal from './VisitPreparationSheetModal.svelte';
+	import {
+		parseVisitPreparationSheet,
+		type VisitPreparationSheetData
+	} from '$lib/features/visitPreparationSheet/parse';
+	import { isVisitPreparationSheetTriggeredMessage } from '$lib/features/visitPreparationSheet/state';
 
 	interface MessageType {
 		id: string;
@@ -112,6 +119,11 @@
 			usage?: unknown;
 		};
 		annotation?: { type: string; rating: number };
+		meta?: {
+			visit_preparation_sheet?: {
+				triggered_by_button?: boolean;
+			};
+		};
 	}
 
 	export let chatId = '';
@@ -186,6 +198,25 @@
 	let loadingSpeech = false;
 
 	let showRateComment = false;
+	let showVisitPreparationSheetModal = false;
+	let visitPreparationSheetOpenedMessageId = '';
+	let visitPreparationSheet: VisitPreparationSheetData | null = null;
+	let isVisitPreparationSheetResponse = false;
+
+	$: isVisitPreparationSheetResponse = isVisitPreparationSheetTriggeredMessage(message);
+	$: visitPreparationSheet = isVisitPreparationSheetResponse
+		? parseVisitPreparationSheet(message.content ?? '')
+		: null;
+	$: if (
+		visitPreparationSheet &&
+		isVisitPreparationSheetResponse &&
+		message.done &&
+		isLastMessage &&
+		visitPreparationSheetOpenedMessageId !== message.id
+	) {
+		showVisitPreparationSheetModal = true;
+		visitPreparationSheetOpenedMessageId = message.id;
+	}
 
 	const copyToClipboard = async (text) => {
 		text = removeAllDetails(text);
@@ -621,6 +652,8 @@
 	}}
 />
 
+<VisitPreparationSheetModal bind:show={showVisitPreparationSheetModal} sheet={visitPreparationSheet} />
+
 {#key message.id}
 	<div
 		class=" flex w-full message-{message.id}"
@@ -1018,6 +1051,24 @@
 										</svg>
 									</button>
 								</Tooltip>
+
+								{#if visitPreparationSheet}
+									<Tooltip content="查看拜访准备表" placement="bottom">
+										<button
+											type="button"
+											aria-label="查看拜访准备表"
+											title="查看拜访准备表"
+											class="{isLastMessage || ($settings?.highContrastMode ?? false)
+												? 'visible'
+												: 'invisible group-hover:visible'} p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg dark:hover:text-white hover:text-black transition"
+											on:click={() => {
+												showVisitPreparationSheetModal = true;
+											}}
+										>
+											<DocumentCheck className="w-4 h-4" strokeWidth="2.1" />
+										</button>
+									</Tooltip>
+								{/if}
 
 								{#if !readOnly && ($user?.role === 'admin' || ($user?.permissions?.chat?.tts ?? true))}
 									<Tooltip content={$i18n.t('Read Aloud')} placement="bottom">

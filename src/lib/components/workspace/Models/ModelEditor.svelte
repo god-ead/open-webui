@@ -25,6 +25,7 @@
 	import DefaultFeatures from './DefaultFeatures.svelte';
 	import BuiltinTools from './BuiltinTools.svelte';
 	import PromptSuggestions from './PromptSuggestions.svelte';
+	import SalesCapabilities from './SalesCapabilities.svelte';
 	import AccessControlModal from '../common/AccessControlModal.svelte';
 	import LockClosed from '$lib/components/icons/LockClosed.svelte';
 	import { updateModelAccessGrants } from '$lib/apis/models';
@@ -99,6 +100,9 @@
 	let defaultFilterIds = [];
 
 	let capabilities = { ...DEFAULT_CAPABILITIES };
+	let sales = {
+		visit_preparation_sheet: false
+	};
 	let defaultFeatureIds = [];
 	let builtinTools = {};
 
@@ -214,6 +218,18 @@
 			}
 		}
 
+		if (sales.visit_preparation_sheet) {
+			info.meta.sales = {
+				...(info.meta.sales ?? {}),
+				visit_preparation_sheet: true
+			};
+		} else if (info.meta.sales?.visit_preparation_sheet) {
+			delete info.meta.sales.visit_preparation_sheet;
+			if (Object.keys(info.meta.sales).length === 0) {
+				delete info.meta.sales;
+			}
+		}
+
 		if (tts.voice !== '') {
 			if (!info.meta.tts) info.meta.tts = {};
 			info.meta.tts.voice = tts.voice;
@@ -322,6 +338,10 @@
 
 			// Per-model overrides take precedence over admin defaults
 			capabilities = { ...capabilities, ...(model?.meta?.capabilities ?? {}) };
+			sales = {
+				...sales,
+				...(model?.meta?.sales ?? {})
+			};
 			defaultFeatureIds = model?.meta?.defaultFeatureIds ?? defaultFeatureIds;
 			builtinTools = model?.meta?.builtinTools ?? builtinTools;
 			tts = { voice: model?.meta?.tts?.voice ?? '' };
@@ -831,6 +851,10 @@
 
 					<div class="my-4">
 						<Capabilities bind:capabilities />
+					</div>
+
+					<div class="my-4">
+						<SalesCapabilities bind:sales />
 					</div>
 
 					{#if Object.keys(capabilities).filter((key) => capabilities[key]).length > 0}

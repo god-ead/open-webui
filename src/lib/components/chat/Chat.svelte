@@ -107,6 +107,12 @@
 	import Sidebar from '../icons/Sidebar.svelte';
 	import Image from '../common/Image.svelte';
 	import { getBanners } from '$lib/apis/configs';
+	import {
+		VISIT_PREPARATION_SHEET_SUBMISSION_TYPE,
+		createVisitPreparationSheetMessageMeta,
+		isVisitPreparationSheetEnabledForModel,
+		isVisitPreparationSheetTriggeredMessage
+	} from '$lib/features/visitPreparationSheet/state';
 
 	export let chatIdProp = '';
 
@@ -136,6 +142,12 @@
 	let selectedModels = [''];
 	let atSelectedModel: Model | undefined;
 	let selectedModelIds = [];
+	let currentConversationMessages = [];
+	let currentVisitPreparationSheetModel: Model | null = null;
+	let visitPreparationSheetEnabled = false;
+	let lastAssistantMessage = null;
+	let showVisitPreparationSheetTrigger = false;
+	let visitPreparationSheetTriggerDisabled = false;
 
 	const getForcedUserDefaultModels = () => {
 		if ($user?.role === 'admin' || !($config?.force_user_default_models ?? false)) {
@@ -162,6 +174,40 @@
 	} else {
 		selectedModelIds = selectedModels;
 	}
+
+	$: currentConversationMessages = history ? createMessagesList(history, history.currentId) : [];
+	$: currentVisitPreparationSheetModel =
+		atSelectedModel !== undefined
+			? atSelectedModel
+			: selectedModels.length === 1
+				? $models.find((model) => model.id === selectedModels[0]) ?? null
+				: null;
+	$: visitPreparationSheetEnabled = isVisitPreparationSheetEnabledForModel(
+		currentVisitPreparationSheetModel
+	);
+	$: lastAssistantMessage =
+		[...currentConversationMessages].reverse().find((message) => message.role === 'assistant') ?? null;
+	$: showVisitPreparationSheetTrigger =
+		currentConversationMessages.length > 0 && visitPreparationSheetEnabled;
+	$: visitPreparationSheetTriggerDisabled = isVisitPreparationSheetTriggeredMessage(
+		lastAssistantMessage
+	);
+
+	const normalizeSubmittedPrompt = (
+		detail: string | { prompt?: string; submissionType?: string }
+	): { prompt: string; submissionType: string } => {
+		if (typeof detail === 'string') {
+			return {
+				prompt: detail.replaceAll('\n\n', '\n'),
+				submissionType: ''
+			};
+		}
+
+		return {
+			prompt: (detail?.prompt ?? '').replaceAll('\n\n', '\n'),
+			submissionType: detail?.submissionType ?? ''
+		};
+	};
 
 	let selectedToolIds = [];
 	let selectedFilterIds = [];
@@ -1784,7 +1830,13 @@
 	// Chat functions
 	//////////////////////////
 
-	const submitPrompt = async (userPrompt, { _raw = false } = {}) => {
+	const submitPrompt = async (
+		userPrompt,
+		{
+			_raw = false,
+			submissionType = ''
+		}: { _raw?: boolean; submissionType?: string } = {}
+	) => {
 		console.log('submitPrompt', userPrompt, $chatId);
 
 		const _selectedModels = selectedModels.map((modelId) =>
@@ -1897,7 +1949,10 @@
 			content: userPrompt,
 			files: _files.length > 0 ? _files : undefined,
 			timestamp: Math.floor(Date.now() / 1000), // Unix epoch
-			models: selectedModels
+			models: selectedModels,
+			...(submissionType === VISIT_PREPARATION_SHEET_SUBMISSION_TYPE
+				? createVisitPreparationSheetMessageMeta()
+				: {})
 		};
 
 		// Add message to history and Set currentId to messageId
@@ -1915,7 +1970,10 @@
 
 		saveSessionSelectedModels();
 
-		await sendMessage(history, userMessageId, { newChat: true });
+		await sendMessage(history, userMessageId, {
+			newChat: true,
+			submissionType
+		});
 	};
 
 	const sendMessage = async (
@@ -1925,12 +1983,14 @@
 			messages = null,
 			modelId = null,
 			modelIdx = null,
-			newChat = false
+			newChat = false,
+			submissionType = ''
 		}: {
 			messages?: any[] | null;
 			modelId?: string | null;
 			modelIdx?: number | null;
 			newChat?: boolean;
+			submissionType?: string;
 		} = {}
 	) => {
 		if (autoScroll) {
@@ -1963,7 +2023,10 @@
 					model: model.id,
 					modelName: model.name ?? model.id,
 					modelIdx: modelIdx ? modelIdx : _modelIdx,
-					timestamp: Math.floor(Date.now() / 1000) // Unix epoch
+					timestamp: Math.floor(Date.now() / 1000), // Unix epoch
+					...(submissionType === VISIT_PREPARATION_SHEET_SUBMISSION_TYPE
+						? createVisitPreparationSheetMessageMeta()
+						: {})
 				};
 
 				// Add message to history and Set currentId to messageId
@@ -2882,6 +2945,8 @@
 									bind:atSelectedModel
 									bind:showCommands
 									bind:dragged
+									{showVisitPreparationSheetTrigger}
+									visitPreparationSheetTriggerDisabled={visitPreparationSheetTriggerDisabled}
 									toolServers={$toolServers}
 									{generating}
 									{stopResponse}
@@ -2936,8 +3001,10 @@
 										clearDraft();
 										if (e.detail || files.length > 0) {
 											await tick();
-
-											submitPrompt(e.detail.replaceAll('\n\n', '\n'));
+											const submission = normalizeSubmittedPrompt(e.detail);
+											submitPrompt(submission.prompt, {
+												submissionType: submission.submissionType
+											});
 										}
 									}}
 								/>
@@ -2980,7 +3047,10 @@
 										clearDraft();
 										if (e.detail || files.length > 0) {
 											await tick();
-											submitPrompt(e.detail.replaceAll('\n\n', '\n'));
+											const submission = normalizeSubmittedPrompt(e.detail);
+											submitPrompt(submission.prompt, {
+												submissionType: submission.submissionType
+											});
 										}
 									}}
 								/>

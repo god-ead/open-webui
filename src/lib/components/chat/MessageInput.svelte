@@ -131,6 +131,8 @@
 	export let imageGenerationEnabled = false;
 	export let webSearchEnabled = false;
 	export let codeInterpreterEnabled = false;
+	export let showVisitPreparationSheetTrigger = false;
+	export let visitPreparationSheetTriggerDisabled = false;
 
 	export let pendingOAuthTools = [];
 
@@ -1854,15 +1856,17 @@
 											</Tooltip>
 										</div>
 									{:else}
-										<div class="flex items-center">
-											<VisitPreparationSheetTrigger
-												draftPrompt={prompt}
-												disabled={uploadPending}
-												onSubmit={(preparedPrompt) => {
-													dispatch('submit', preparedPrompt);
-												}}
-											/>
-										</div>
+										{#if showVisitPreparationSheetTrigger}
+											<div class="flex items-center">
+												<VisitPreparationSheetTrigger
+													draftPrompt={prompt}
+													disabled={uploadPending || visitPreparationSheetTriggerDisabled}
+													onSubmit={(payload) => {
+														dispatch('submit', payload);
+													}}
+												/>
+											</div>
+										{/if}
 
 										{#if prompt !== '' && !history?.currentId && !$selectedTerminalId && ($config?.features?.enable_notes ?? false) && ($_user?.role === 'admin' || ($_user?.permissions?.features?.notes ?? true))}
 											<!-- {$i18n.t('Create Note')}  -->
