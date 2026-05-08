@@ -1861,6 +1861,7 @@
 												<VisitPreparationSheetTrigger
 													draftPrompt={prompt}
 													disabled={uploadPending || visitPreparationSheetTriggerDisabled}
+													alreadyGenerated={visitPreparationSheetTriggerDisabled}
 													onSubmit={(payload) => {
 														dispatch('submit', payload);
 													}}
