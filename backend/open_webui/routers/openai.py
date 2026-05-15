@@ -55,6 +55,7 @@ from open_webui.utils.misc import (
     stream_chunks_handler,
     stream_wrapper,
 )
+from open_webui.utils.vendor_native_web_search import execute_kimi_api_web_search
 
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.headers import include_user_info_headers
@@ -1152,6 +1153,22 @@ async def generate_chat_completion(
             request_url = f'{url}/responses'
         else:
             request_url = f'{url}/chat/completions'
+
+    api_web_search = metadata.get('api_web_search') if metadata else None
+    if (
+        api_web_search
+        and api_web_search.get('enabled')
+        and api_web_search.get('provider') == 'kimi'
+        and not is_responses
+    ):
+        return await execute_kimi_api_web_search(
+            base_url=url,
+            headers=headers,
+            cookies=cookies,
+            payload=payload,
+            metadata=metadata or {},
+        )
+
     # For Chat Completions, strip image parts from multimodal tool messages
     # (Chat Completions doesn't support images in tool content).
     if not is_responses and 'messages' in payload:

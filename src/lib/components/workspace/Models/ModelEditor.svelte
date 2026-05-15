@@ -18,6 +18,7 @@
 	import ActionsSelector from '$lib/components/workspace/Models/ActionsSelector.svelte';
 	import Capabilities from '$lib/components/workspace/Models/Capabilities.svelte';
 	import Textarea from '$lib/components/common/Textarea.svelte';
+	import Checkbox from '$lib/components/common/Checkbox.svelte';
 	import AccessControl from '../common/AccessControl.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import XMark from '$lib/components/icons/XMark.svelte';
@@ -105,10 +106,43 @@
 	};
 	let defaultFeatureIds = [];
 	let builtinTools = {};
+	let isApiWebSearchSupported = false;
+	let apiWebSearch = {
+		provider: 'kimi',
+		enabled: false,
+		formula: 'moonshot/web-search:latest'
+	};
 
 	let actionIds = [];
 	let accessGrants = [];
 	let tts = { voice: '' };
+
+	const isKimiModel = () => {
+		const baseModel = $models.find((m) => m.id === info.base_model_id);
+		const text = [
+			info.base_model_id,
+			baseModel?.id,
+			baseModel?.name,
+			model?.base_model_id,
+			model?.name
+		]
+			.filter(Boolean)
+			.join(' ')
+			.toLowerCase();
+
+		return text.includes('kimi') || text.includes('moonshot');
+	};
+
+	$: isApiWebSearchSupported = isKimiModel();
+	$: if (!isApiWebSearchSupported && apiWebSearch.enabled) {
+		apiWebSearch = {
+			...apiWebSearch,
+			enabled: false
+		};
+	}
+	$: if (!isApiWebSearchSupported && defaultFeatureIds.includes('api_web_search')) {
+		defaultFeatureIds = defaultFeatureIds.filter((id) => id !== 'api_web_search');
+	}
 
 	const submitHandler = async () => {
 		loading = true;
@@ -208,6 +242,17 @@
 			if (info.meta.defaultFeatureIds) {
 				delete info.meta.defaultFeatureIds;
 			}
+		}
+
+		if (isApiWebSearchSupported) {
+			info.meta.api_web_search = {
+				provider: apiWebSearch.provider,
+				enabled:
+					apiWebSearch.enabled && defaultFeatureIds.includes('api_web_search') && isApiWebSearchSupported,
+				formula: apiWebSearch.formula?.trim() || 'moonshot/web-search:latest'
+			};
+		} else if (info.meta.api_web_search) {
+			delete info.meta.api_web_search;
 		}
 
 		if (Object.keys(builtinTools).length > 0) {
@@ -344,6 +389,10 @@
 			};
 			defaultFeatureIds = model?.meta?.defaultFeatureIds ?? defaultFeatureIds;
 			builtinTools = model?.meta?.builtinTools ?? builtinTools;
+			apiWebSearch = {
+				...apiWebSearch,
+				...(model?.meta?.api_web_search ?? {})
+			};
 			tts = { voice: model?.meta?.tts?.voice ?? '' };
 
 			accessGrants = model?.access_grants ?? [];
@@ -871,6 +920,39 @@
 							</div>
 						{/if}
 					{/if}
+
+					<div class="my-4">
+						<div class="flex items-center gap-2 mr-3">
+							<Checkbox
+								state={defaultFeatureIds.includes('api_web_search') ? 'checked' : 'unchecked'}
+								disabled={!isApiWebSearchSupported}
+								on:change={(e) => {
+									if (e.detail === 'checked') {
+										defaultFeatureIds = [...defaultFeatureIds, 'api_web_search'];
+										apiWebSearch = {
+											...apiWebSearch,
+											enabled: true
+										};
+									} else {
+										defaultFeatureIds = defaultFeatureIds.filter((id) => id !== 'api_web_search');
+										apiWebSearch = {
+											...apiWebSearch,
+											enabled: false
+										};
+									}
+								}}
+							/>
+
+							<div
+								class="py-0.5 text-sm {isApiWebSearchSupported ? '' : 'text-gray-400'}"
+								title={isApiWebSearchSupported
+									? 'Kimi API 原生联网搜索'
+									: '当前仅支持 Kimi 自定义模型启用 API 联网搜索'}
+							>
+								API联网搜索
+							</div>
+						</div>
+					</div>
 
 					{#if capabilities.builtin_tools}
 						<div class="my-4">

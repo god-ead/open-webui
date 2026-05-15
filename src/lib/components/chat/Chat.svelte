@@ -216,6 +216,7 @@
 	let imageGenerationEnabled = false;
 	let webSearchEnabled = false;
 	let codeInterpreterEnabled = false;
+	let apiWebSearchEnabled = false;
 
 	let showCommands = false;
 
@@ -254,6 +255,7 @@
 		selectedFilterIds = [];
 		webSearchEnabled = false;
 		imageGenerationEnabled = false;
+		apiWebSearchEnabled = false;
 
 		const storageChatInput = sessionStorage.getItem(
 			`chat-input${chatIdProp ? `-${chatIdProp}` : ''}`
@@ -285,6 +287,7 @@
 						webSearchEnabled = input.webSearchEnabled;
 						imageGenerationEnabled = input.imageGenerationEnabled;
 						codeInterpreterEnabled = input.codeInterpreterEnabled;
+						setApiWebSearchDefault(atSelectedModel ?? $models.find((m) => m.id === selectedModels[0]));
 					}
 				} catch (e) {}
 			} else {
@@ -346,9 +349,26 @@
 		webSearchEnabled = false;
 		imageGenerationEnabled = false;
 		codeInterpreterEnabled = false;
+		apiWebSearchEnabled = false;
 
 		if (selectedModelIds.filter((id) => id).length > 0) {
 			setDefaults();
+		}
+	};
+
+	const isApiWebSearchConfigured = (model) =>
+		model?.info?.meta?.api_web_search?.provider === 'kimi' &&
+		model?.info?.meta?.api_web_search?.enabled;
+
+	const setApiWebSearchDefault = (model) => {
+		const enabled =
+			isApiWebSearchConfigured(model) &&
+			model?.info?.meta?.defaultFeatureIds?.includes('api_web_search');
+
+		apiWebSearchEnabled = enabled;
+
+		if (enabled) {
+			webSearchEnabled = true;
 		}
 	};
 
@@ -419,6 +439,10 @@
 					($user?.role === 'admin' || $user?.permissions?.features?.web_search)
 				) {
 					webSearchEnabled = model.info.meta.defaultFeatureIds.includes('web_search');
+				}
+
+				if (isApiWebSearchConfigured(model)) {
+					setApiWebSearchDefault(model);
 				}
 
 				if (
@@ -808,6 +832,7 @@
 				webSearchEnabled = false;
 				imageGenerationEnabled = false;
 				codeInterpreterEnabled = false;
+				apiWebSearchEnabled = false;
 
 				try {
 					const input = JSON.parse(storageChatInput);
@@ -820,6 +845,7 @@
 						webSearchEnabled = input.webSearchEnabled;
 						imageGenerationEnabled = input.imageGenerationEnabled;
 						codeInterpreterEnabled = input.codeInterpreterEnabled;
+						setApiWebSearchDefault(atSelectedModel ?? $models.find((m) => m.id === selectedModels[0]));
 					}
 				} catch (e) {}
 			}
@@ -2110,7 +2136,13 @@
 	const getFeatures = () => {
 		let features = {};
 
-		if ($config?.features)
+		if ($config?.features) {
+			const canUseWebSearch =
+				$user?.role === 'admin' || $user?.permissions?.features?.web_search;
+			const webSearchFeatureEnabled =
+				apiWebSearchEnabled ||
+				($config?.features?.enable_web_search && canUseWebSearch && webSearchEnabled);
+
 			features = {
 				voice: $showCallOverlay,
 				image_generation:
@@ -2123,20 +2155,19 @@
 					($user?.role === 'admin' || $user?.permissions?.features?.code_interpreter)
 						? codeInterpreterEnabled
 						: false,
-				web_search:
-					$config?.features?.enable_web_search &&
-					($user?.role === 'admin' || $user?.permissions?.features?.web_search)
-						? webSearchEnabled
-						: false
+				api_web_search: apiWebSearchEnabled,
+				web_search: webSearchFeatureEnabled
 			};
+		}
 
 		const currentModels = atSelectedModel?.id ? [atSelectedModel.id] : selectedModels;
 		if (
-			currentModels.filter(
-				(model) => $models.find((m) => m.id === model)?.info?.meta?.capabilities?.web_search ?? true
-			).length === currentModels.length
+			currentModels.filter((modelId) => {
+				const model = $models.find((m) => m.id === modelId);
+				return model?.info?.meta?.capabilities?.web_search || isApiWebSearchConfigured(model);
+			}).length === currentModels.length
 		) {
-			if ($config?.features?.enable_web_search && ($settings?.webSearch ?? false) === 'always') {
+			if (apiWebSearchEnabled || ($config?.features?.enable_web_search && ($settings?.webSearch ?? false) === 'always')) {
 				features = { ...features, web_search: true };
 			}
 		}

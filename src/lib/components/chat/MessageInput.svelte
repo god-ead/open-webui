@@ -467,9 +467,16 @@
 		(model) => $models.find((m) => m.id === model)?.info?.meta?.capabilities?.file_upload ?? true
 	);
 
+	const isApiWebSearchConfigured = (model) =>
+		model?.info?.meta?.api_web_search?.provider === 'kimi' &&
+		model?.info?.meta?.api_web_search?.enabled;
+
 	let webSearchCapableModels = [];
 	$: webSearchCapableModels = (atSelectedModel?.id ? [atSelectedModel.id] : selectedModels).filter(
-		(model) => $models.find((m) => m.id === model)?.info?.meta?.capabilities?.web_search ?? true
+		(modelId) => {
+			const model = $models.find((m) => m.id === modelId);
+			return model?.info?.meta?.capabilities?.web_search || isApiWebSearchConfigured(model);
+		}
 	);
 
 	let imageGenerationCapableModels = [];

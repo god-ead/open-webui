@@ -115,6 +115,7 @@ from open_webui.utils.code_interpreter import execute_code_jupyter
 from open_webui.utils.payload import apply_system_prompt_to_body
 from open_webui.utils.response import normalize_usage
 from open_webui.utils.mcp.client import MCPClient
+from open_webui.utils.vendor_native_web_search import get_api_web_search_config
 
 
 from open_webui.config import (
@@ -1870,10 +1871,11 @@ async def chat_image_generation_handler(request: Request, form_data: dict, extra
 async def chat_completion_files_handler(
     request: Request, body: dict, extra_params: dict, user: UserModel
 ) -> tuple[dict, dict[str, list]]:
+    metadata = body.get('metadata', {})
     __event_emitter__ = extra_params['__event_emitter__']
     sources = []
 
-    if files := body.get('metadata', {}).get('files', None):
+    if files := metadata.get('files', None):
         # Check if all files are in full context mode
         all_full_context = all(item.get('context') == 'full' for item in files)
 
@@ -1959,8 +1961,8 @@ async def chat_completion_files_handler(
             src_info = source.get('source') or {}
 
             for index, _ in enumerate(documents):
-                metadata = metadatas[index] if index < len(metadatas) else None
-                _id = (metadata or {}).get('source') or (src_info or {}).get('id') or 'N/A'
+                source_metadata = metadatas[index] if index < len(metadatas) else None
+                _id = (source_metadata or {}).get('source') or (src_info or {}).get('id') or 'N/A'
                 unique_ids.add(_id)
 
         sources_count = len(unique_ids)
@@ -2320,6 +2322,16 @@ async def process_chat_payload(request, form_data, user, metadata, model):
 
     features = form_data.pop('features', None) or {}
     extra_params['__features__'] = features
+    api_web_search = get_api_web_search_config(
+        model,
+        features,
+        getattr(request, 'base_model_id', model.get('base_model_id') or form_data.get('model')),
+    )
+    if api_web_search:
+        metadata['api_web_search'] = api_web_search
+    else:
+        metadata.pop('api_web_search', None)
+
     if features:
         if 'voice' in features and features['voice']:
             if request.app.state.config.VOICE_MODE_PROMPT_TEMPLATE != None:
@@ -2340,7 +2352,7 @@ async def process_chat_payload(request, form_data, user, metadata, model):
 
         if 'web_search' in features and features['web_search']:
             # Skip forced RAG web search when native FC is enabled - model can use web_search tool
-            if metadata.get('params', {}).get('function_calling') != 'native':
+            if not metadata.get('api_web_search') and metadata.get('params', {}).get('function_calling') != 'native':
                 form_data = await chat_web_search_handler(request, form_data, extra_params, user)
 
         if 'image_generation' in features and features['image_generation']:
@@ -2656,7 +2668,10 @@ async def process_chat_payload(request, form_data, user, metadata, model):
         builtin_tools_enabled = (model.get('info', {}).get('meta', {}).get('capabilities') or {}).get(
             'builtin_tools', True
         )
-        if metadata.get('params', {}).get('function_calling') == 'native' and builtin_tools_enabled:
+        if (
+            metadata.get('params', {}).get('function_calling') == 'native'
+            and builtin_tools_enabled
+        ):
             # Add file context to user messages
             chat_id = metadata.get('chat_id')
             form_data['messages'] = add_file_context(form_data.get('messages', []), chat_id, user)
@@ -2675,7 +2690,7 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                     tools_dict[name] = tool_dict
 
         if tools_dict:
-            if metadata.get('params', {}).get('function_calling') == 'native':
+            if metadata.get('params', {}).get('function_calling') == 'native' or metadata.get('api_web_search'):
                 # If the function calling is native, then call the tools function calling handler
                 metadata['tools'] = tools_dict
                 form_data['tools'] = [

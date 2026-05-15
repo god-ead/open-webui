@@ -1,4 +1,3 @@
-# syntax=docker.fzyun.io/docker/dockerfile:1
 # 初始化设备类型参数
 ARG USE_CUDA=false
 ARG USE_OLLAMA=false
