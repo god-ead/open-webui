@@ -193,8 +193,6 @@ RUN set -e; \
     python -c "import os, nltk; from nltk.downloader import Downloader; index=os.environ.get('NLTK_DATA_INDEX_URL'); (Downloader(server_index_url=index).download('punkt_tab') if index else nltk.download('punkt_tab'))"; \
     fi; \
     fi; \
-    playwright install chromium; \
-    playwright install-deps chromium; \
     mkdir -p /app/backend/preload; \
     if [ -d /app/backend/data/cache ]; then cp -a /app/backend/data/cache /app/backend/preload/cache; fi; \
     mkdir -p /app/backend/data; chown -R $UID:$GID /app/backend/data/ /app/backend/preload/; \
