@@ -1,0 +1,65 @@
+stages:
+  - build    # 镜像构建与发布
+
+variables:
+  REGISTRY_URL: "172.19.52.215:9100"
+  # 仅需修改此处：font-rec-zijia为harbor上的项目名称，zijia_font_recognition为构建镜像的名称
+  IMAGE_NAME: "$REGISTRY_URL/sales-agents/sales-agents-core"
+  DOCKER_TLS_VERIFY: ""  # 改为空字符串
+  DOCKER_HOST: "unix:///var/run/docker.sock"  # 明确指定 Docker 主机
+  DOCKER_CERT_PATH: ""   # 添加这一行，清空证书路径
+
+build_and_publish:
+  stage: build
+  image: docker.fzyun.io/docker:28.1.1
+  
+  before_script:
+    - |
+      echo "$PRIVATE_CI_REGISTRY_PASSWORD" | docker login \
+        -u "$PRIVATE_CI_REGISTRY_USER" \
+        --password-stdin \
+        "$REGISTRY_URL" || { echo "Docker 登录失败"; exit 1; }
+  
+  script:
+    # 确定镜像标签的逻辑
+    - |
+      if [ "$CI_COMMIT_BRANCH" = "main" ]; then
+        # main分支：优先使用手动指定版本号，否则使用commit SHA前8位
+        if [ -n "$CUSTOM_IMAGE_TAG" ]; then
+          IMAGE_TAG="$CUSTOM_IMAGE_TAG"
+          echo "使用手动指定版本号: ${IMAGE_TAG}"
+        else
+          IMAGE_TAG="$(echo $CI_COMMIT_SHA | cut -c1-8)"
+          echo "使用commit SHA作为标签: ${IMAGE_TAG}"
+        fi
+      else
+        # 其他分支：使用commit SHA前8位
+        IMAGE_TAG="$(echo $CI_COMMIT_SHA | cut -c1-8)"
+        echo "使用commit SHA作为标签: ${IMAGE_TAG}"
+      fi
+      
+      echo "开始构建镜像：${IMAGE_NAME}:${IMAGE_TAG}"
+      # 构建镜像（添加失败立即退出）,如果需要从minio下载数据，则增加--secret id等配置
+      docker build \
+        -t "${IMAGE_NAME}:${IMAGE_TAG}" \
+        --secret id=minio_access_key,env=MINIO_ACCESS_KEY \
+        --secret id=minio_secret_key,env=MINIO_SECRET_KEY \
+        . || { echo "镜像构建失败"; exit 1; }
+      
+      # 如果是main分支且有指定版本号，同时打上latest标签
+      if [ "$CI_COMMIT_BRANCH" = "main" ] && [ -n "$CUSTOM_IMAGE_TAG" ]; then
+        echo "为main分支打上latest标签"
+        docker tag "${IMAGE_NAME}:${IMAGE_TAG}" "${IMAGE_NAME}:latest"
+        docker push "${IMAGE_NAME}:latest" || { echo "推送latest标签失败"; exit 1; }
+      fi
+      
+      # 推送镜像
+      docker push "${IMAGE_NAME}:${IMAGE_TAG}" || { echo "镜像推送失败"; exit 1; }
+  
+  # 可选：仅在 push 事件触发（按需调整）
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push"
+  
+  # 配置手动触发的变量（用于main分支手动指定版本号）
+  variables:
+    CUSTOM_IMAGE_TAG: ""  # 手动触发时可覆盖此变量

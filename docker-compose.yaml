@@ -1,0 +1,39 @@
+services:
+  # Open WebUI 主服务容器。
+  # 作用：运行构建后的前端静态资源与 FastAPI 后端，容器内监听 8080。
+  # 当前配置不启动内置/本地 Ollama
+  open-webui:
+    # 从当前目录的 Dockerfile 构建生产镜像。
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # 固定使用本地构建镜像。
+    image: sales-chatbot-image:0.1.8
+    container_name: sales-chatbot
+    # 将运行期变量从 .env 注入 open-webui 容器
+    env_file:
+      - .env
+    # 持久化 Open WebUI 数据，并保存首次启动自动生成的 WEBUI_SECRET_KEY
+    volumes:
+      - /data/app/sales-chatbot:/app/backend/data
+    ports:
+      # 宿主机端口:容器端口。
+      - 0.0.0.0:3030:8080
+    extra_hosts:
+      # 允许容器通过 host.docker.internal 访问宿主机服务。
+      - host.docker.internal:host-gateway
+    restart: unless-stopped
+    environment:
+      # WEBUI_URL 与 OPENID_REDIRECT_URI 需随部署服务器同步修改
+      - TZ=Asia/Shanghai
+      - WEBUI_URL=http://172.19.52.43:3030
+      - WEBUI_AUTH=true
+      - ENABLE_OAUTH_SIGNUP=true
+      - OAUTH_CLIENT_ID=font-ai-sales-dev
+      - OAUTH_CLIENT_SECRET=p4iB5OrmQ7m8DIOg4fJ2dqLEfC5NzcH9
+      - OPENID_PROVIDER_URL=https://founderid.ids.stagex.fzyun.io/auth/realms/FounderID/.well-known/openid-configuration
+      - OAUTH_PROVIDER_NAME=域账号
+      - OAUTH_MERGE_DOMAINS=true
+      - OPENID_REDIRECT_URI=http://172.19.52.43:3030/oauth/oidc/callback
+      - OAUTH_ALLOWED_DOMAINS=*
+      - ENABLE_OAUTH_PERSISTENT_CONFIG=false
