@@ -85,9 +85,7 @@
 		>
 			<div>
 				<div class=" capitalize line-clamp-1" in:fade={{ duration: 200 }}>
-					{#if $user?.role !== 'admin'}
-						智能营销助手
-					{:else if models[selectedModelIdx]?.name}
+					{#if models[selectedModelIdx]?.name}
 						{models[selectedModelIdx]?.name}
 					{:else}
 						{$i18n.t('Hello, {{name}}', { name: $user?.name })}

@@ -142,6 +142,7 @@
 	let selectedModels = [''];
 	let atSelectedModel: Model | undefined;
 	let selectedModelIds = [];
+	let navbarSelectedModel: Model | null = null;
 	let currentConversationMessages = [];
 	let currentVisitPreparationSheetModel: Model | null = null;
 	let visitPreparationSheetEnabled = false;
@@ -174,6 +175,13 @@
 	} else {
 		selectedModelIds = selectedModels;
 	}
+
+	$: navbarSelectedModel =
+		atSelectedModel !== undefined
+			? atSelectedModel
+			: selectedModels.length === 1
+				? $models.find((model) => model.id === selectedModels[0]) ?? null
+				: null;
 
 	$: currentConversationMessages = history ? createMessagesList(history, history.currentId) : [];
 	$: currentVisitPreparationSheetModel =
@@ -2876,6 +2884,7 @@
 						}}
 						{history}
 						title={$chatTitle}
+						selectedModel={navbarSelectedModel}
 						bind:selectedModels
 						shareEnabled={!!history.currentId}
 						{initNewChat}

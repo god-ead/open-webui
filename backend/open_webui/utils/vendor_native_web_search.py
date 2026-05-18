@@ -13,7 +13,7 @@ from open_webui.utils.tools import get_updated_tool_function
 
 log = logging.getLogger(__name__)
 
-KIMI_MAX_TOOL_ROUNDS = 20
+KIMI_MAX_TOOL_ROUNDS = 50
 KIMI_WEB_SEARCH_TOOL = {
     'type': 'builtin_function',
     'function': {'name': '$web_search'},

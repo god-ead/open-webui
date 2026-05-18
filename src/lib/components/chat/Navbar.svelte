@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { getContext } from 'svelte';
 	import { toast } from 'svelte-sonner';
+	import type { Model } from '$lib/stores';
 
 	import {
 		WEBUI_NAME,
@@ -49,6 +50,7 @@
 	export let chat;
 	export let history;
 	export let selectedModels;
+	export let selectedModel: Model | null = null;
 	export let showModelSelector = true;
 
 	export let onSaveTempChat: () => {};
@@ -118,7 +120,7 @@
 							<div
 								class="h-9 flex items-center px-2 text-lg font-semibold text-gray-800 dark:text-gray-100 truncate"
 							>
-								智能营销助手
+								{selectedModel?.name ?? '智能营销助手'}
 							</div>
 						{/if}
 					{/if}

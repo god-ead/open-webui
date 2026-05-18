@@ -671,11 +671,11 @@
 		<div class="flex-auto w-0 pl-1 relative">
 			<Name>
 				<Tooltip
-					content={$user?.role === 'admin' ? (model?.name ?? message.model) : '智能营销助手'}
+					content={(model?.name ?? message.model)}
 					placement="top-start"
 				>
 					<span id="response-message-model-name" class="line-clamp-1 text-black dark:text-white">
-						{$user?.role === 'admin' ? (model?.name ?? message.model) : '智能营销助手'}
+						{(model?.name ?? message.model)}
 					</span>
 				</Tooltip>
 
