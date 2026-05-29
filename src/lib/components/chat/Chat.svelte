@@ -2351,6 +2351,11 @@
 
 		// Use the user-selected terminal from the dropdown
 		const activeTerminalId = $selectedTerminalId ?? null;
+		const followUpGeneration =
+			($settings?.autoFollowUps ?? true) &&
+			(model?.info?.meta?.taskSettings?.enabled
+				? (model.info.meta.taskSettings.followUpGeneration ?? true)
+				: true);
 
 		const res = await generateOpenAIChatCompletion(
 			localStorage.token,
@@ -2407,7 +2412,7 @@
 								tags_generation: $settings?.autoTags ?? true
 							}
 						: {}),
-					follow_up_generation: $settings?.autoFollowUps ?? true
+					follow_up_generation: followUpGeneration
 				},
 
 				...(stream && (model.info?.meta?.capabilities?.usage ?? false)

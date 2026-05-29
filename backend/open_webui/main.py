@@ -112,7 +112,7 @@ from sqlalchemy.orm import Session
 from open_webui.internal.db import ScopedSession, engine, get_session
 
 from open_webui.models.functions import Functions
-from open_webui.models.models import Models
+from open_webui.models.models import Models, resolve_model_task_settings
 from open_webui.models.users import UserModel, Users
 from open_webui.models.chats import Chats
 
@@ -1771,6 +1771,13 @@ async def chat_completion(
 
         if model_info_params.get('reasoning_tags') is not None:
             reasoning_tags = model_info_params.get('reasoning_tags')
+
+        if tasks and tasks.get('follow_up_generation'):
+            task_settings = resolve_model_task_settings(
+                model_info,
+                request.app.state.config,
+            )
+            tasks['follow_up_generation'] = bool(task_settings.get('followUpGeneration', True))
 
         metadata = {
             'user_id': user.id,

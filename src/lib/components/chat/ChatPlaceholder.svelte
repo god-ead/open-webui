@@ -22,6 +22,11 @@
 	let mounted = false;
 	let selectedModelIdx = 0;
 
+	const getChatPlaceholder = (model: any) => {
+		const placeholder = model?.info?.meta?.chatPlaceholder?.trim();
+		return placeholder || $i18n.t('How can I help you today?');
+	};
+
 	$: if (modelIds.length > 0) {
 		selectedModelIdx = models.length - 1;
 	}
@@ -122,7 +127,7 @@
 						{/if}
 					{:else}
 						<div class=" text-gray-400 dark:text-gray-500 line-clamp-1 font-p">
-							{$i18n.t('How can I help you today?')}
+							{getChatPlaceholder(atSelectedModel ?? models[selectedModelIdx])}
 						</div>
 					{/if}
 					</div>

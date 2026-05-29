@@ -24,3 +24,7 @@ uploads
 **/*.db
 _test
 backend/data/*
+
+# CLI各插件设置
+.codegraph
+.codex

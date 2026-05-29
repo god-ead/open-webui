@@ -34,6 +34,11 @@ class ModelParams(BaseModel):
     pass
 
 
+class ModelTaskSettings(BaseModel):
+    enabled: bool = False
+    followUpGeneration: bool = True
+
+
 # ModelMeta is a model for the data stored in the meta field of the Model table
 class ModelMeta(BaseModel):
     profile_image_url: Optional[str] = '/static/favicon.png'
@@ -42,8 +47,10 @@ class ModelMeta(BaseModel):
     """
         User-facing description of the model.
     """
+    chatPlaceholder: Optional[str] = None
 
     capabilities: Optional[dict] = None
+    taskSettings: Optional[ModelTaskSettings] = None
 
     model_config = ConfigDict(extra='allow')
 
@@ -505,3 +512,28 @@ class ModelsTable:
 
 
 Models = ModelsTable()
+
+
+def resolve_model_task_settings(
+    model_info: Optional[ModelModel],
+    global_task_config,
+) -> dict:
+    task_settings = {
+        'followUpGeneration': bool(
+            getattr(global_task_config, 'ENABLE_FOLLOW_UP_GENERATION', True)
+        )
+    }
+
+    if not model_info or not model_info.meta:
+        return task_settings
+
+    meta = model_info.meta.model_dump() if hasattr(model_info.meta, 'model_dump') else model_info.meta
+    local_task_settings = meta.get('taskSettings') if isinstance(meta, dict) else None
+
+    if not isinstance(local_task_settings, dict) or not local_task_settings.get('enabled', False):
+        return task_settings
+
+    return {
+        **task_settings,
+        **{key: value for key, value in local_task_settings.items() if key != 'enabled'},
+    }
