@@ -93,7 +93,7 @@ async def run_company_profile_pipe(
         if intent["intent"] == "analyze":
             await _emit_status(
                 event_emitter,
-                f"正在调查 {intent['company_name']}，实际时间根据公司复杂度有所变化，预计需要4~7分钟",
+                f"正在调查 {intent['company_name']}，通常需要4~7分钟，实际时间将根据公司复杂程度有所变化",
                 done=False,
             )
             result = await asyncio.to_thread(bridge.analyze_company, intent["company_name"])
