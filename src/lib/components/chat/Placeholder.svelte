@@ -65,6 +65,11 @@
 	let models = [];
 	let selectedModelIdx = 0;
 
+	const getChatPlaceholder = (model: any) => {
+		const placeholder = model?.info?.meta?.chatPlaceholder?.trim();
+		return placeholder || $i18n.t('How can I help you today?');
+	};
+
 	$: if (selectedModels.length > 0) {
 		selectedModelIdx = models.length - 1;
 	}
@@ -132,7 +137,9 @@
 					{toolServers}
 					{stopResponse}
 					{createMessagePair}
-					placeholder={$i18n.t('How can I help you today?')}
+					placeholder={getChatPlaceholder(
+						atSelectedModel ?? models[selectedModelIdx]
+					)}
 					{onChange}
 					{onUpload}
 					on:submit={(e) => {

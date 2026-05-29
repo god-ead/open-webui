@@ -8,6 +8,8 @@
 	import { getTools } from '$lib/apis/tools';
 	import { getFunctions } from '$lib/apis/functions';
 	import { getModelsDefaults } from '$lib/apis/configs';
+	import type { ModelTaskSettings } from '$lib/apis';
+	import { getTaskConfig } from '$lib/apis';
 
 	import AdvancedParams from '$lib/components/chat/Settings/Advanced/AdvancedParams.svelte';
 	import Tags from '$lib/components/common/Tags.svelte';
@@ -19,6 +21,7 @@
 	import Capabilities from '$lib/components/workspace/Models/Capabilities.svelte';
 	import Textarea from '$lib/components/common/Textarea.svelte';
 	import Checkbox from '$lib/components/common/Checkbox.svelte';
+	import Switch from '$lib/components/common/Switch.svelte';
 	import AccessControl from '../common/AccessControl.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import XMark from '$lib/components/icons/XMark.svelte';
@@ -116,6 +119,17 @@
 	let actionIds = [];
 	let accessGrants = [];
 	let tts = { voice: '' };
+	let globalFollowUpGeneration = true;
+	let taskSettings: ModelTaskSettings = {
+		enabled: false,
+		followUpGeneration: true
+	};
+
+	const getTaskSettings = (overrides: Partial<ModelTaskSettings> = {}): ModelTaskSettings => ({
+		enabled: false,
+		followUpGeneration: globalFollowUpGeneration,
+		...overrides
+	});
 
 	const isKimiModel = () => {
 		const baseModel = $models.find((m) => m.id === info.base_model_id);
@@ -187,6 +201,9 @@
 		} else {
 			info.meta.description = null;
 		}
+
+		info.meta.chatPlaceholder =
+			(info.meta.chatPlaceholder ?? '').trim() === '' ? null : info.meta.chatPlaceholder;
 
 		if (knowledge.length > 0) {
 			info.meta.knowledge = knowledge;
@@ -287,6 +304,8 @@
 			}
 		}
 
+		info.meta.taskSettings = { ...taskSettings };
+
 		info.params.system = system.trim() === '' ? null : system;
 		info.params.stop = params.stop
 			? (typeof params.stop === 'string' ? params.stop.split(',') : params.stop).filter((s) =>
@@ -312,12 +331,15 @@
 		// Fetch admin-configured default model metadata so the editor
 		// reflects the actual defaults rather than hardcoded values
 		const modelsConfig = await getModelsDefaults(localStorage.token).catch(() => null);
+		const taskConfig = await getTaskConfig(localStorage.token).catch(() => null);
 		const defaultMeta = modelsConfig?.DEFAULT_MODEL_METADATA ?? {};
 
 		// Use admin defaults as base, falling back to hardcoded defaults
 		capabilities = { ...DEFAULT_CAPABILITIES, ...(defaultMeta.capabilities ?? {}) };
 		defaultFeatureIds = defaultMeta.defaultFeatureIds ?? [];
 		builtinTools = defaultMeta.builtinTools ?? {};
+		globalFollowUpGeneration = taskConfig?.ENABLE_FOLLOW_UP_GENERATION ?? true;
+		taskSettings = getTaskSettings();
 
 		// Scroll to top 'workspace-container' element
 		const workspaceContainer = document.getElementById('workspace-container');
@@ -394,6 +416,7 @@
 				...(model?.meta?.api_web_search ?? {})
 			};
 			tts = { voice: model?.meta?.tts?.voice ?? '' };
+			taskSettings = getTaskSettings(model?.meta?.taskSettings ?? {});
 
 			accessGrants = model?.access_grants ?? [];
 
@@ -759,6 +782,20 @@
 									/>
 								</div>
 							</div>
+
+							<div class="mb-1">
+								<div class="mb-1 flex w-full justify-between items-center">
+									<div class=" self-center text-xs font-medium text-gray-500">
+										{'聊天占位提示'}
+									</div>
+								</div>
+
+								<Textarea
+									className=" text-sm w-full bg-transparent outline-hidden resize-none overflow-y-hidden "
+									placeholder={'留空则使用默认聊天占位提示'}
+									bind:value={info.meta.chatPlaceholder}
+								/>
+							</div>
 						</div>
 					</div>
 
@@ -810,6 +847,32 @@
 								</div>
 							{/if}
 						</div>
+					</div>
+
+					<div class="my-2">
+						<div class="mb-2.5 flex w-full items-center justify-between">
+							<div class="self-center text-xs font-medium text-gray-500">
+								{'任务设置'}
+							</div>
+
+							<Switch bind:state={taskSettings.enabled} />
+						</div>
+
+						{#if taskSettings.enabled}
+							<div class="mb-2.5 flex w-full items-center justify-between">
+								<div class="self-center text-xs font-medium">
+									{$i18n.t('Follow Up Generation')}
+								</div>
+
+								<Switch bind:state={taskSettings.followUpGeneration} />
+							</div>
+						{:else}
+							<div class="mb-2.5 text-xs text-gray-500">
+								{'使用全局设置'}: {globalFollowUpGeneration
+									? $i18n.t('Enabled')
+									: $i18n.t('Disabled')}
+							</div>
+						{/if}
 					</div>
 
 					<hr class=" border-gray-100/30 dark:border-gray-850/30 my-2" />
