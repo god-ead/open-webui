@@ -7,6 +7,7 @@ import logging
 import re
 
 from open_webui.utils.chat import generate_chat_completion
+from open_webui.models.models import Models, resolve_model_task_settings
 from open_webui.utils.task import (
     title_generation_template,
     follow_up_generation_template,
@@ -228,12 +229,6 @@ async def generate_title(request: Request, form_data: dict, user=Depends(get_ver
 
 @router.post('/follow_up/completions')
 async def generate_follow_ups(request: Request, form_data: dict, user=Depends(get_verified_user)):
-    if not request.app.state.config.ENABLE_FOLLOW_UP_GENERATION:
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={'detail': 'Follow-up generation is disabled'},
-        )
-
     if getattr(request.state, 'direct', False) and hasattr(request.state, 'model'):
         models = {
             request.state.model['id']: request.state.model,
@@ -246,6 +241,17 @@ async def generate_follow_ups(request: Request, form_data: dict, user=Depends(ge
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail='Model not found',
+        )
+
+    model_info = None if getattr(request.state, 'direct', False) else Models.get_model_by_id(model_id)
+    task_settings = resolve_model_task_settings(
+        model_info,
+        request.app.state.config,
+    )
+    if not bool(task_settings.get('followUpGeneration', True)):
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={'detail': 'Follow-up generation is disabled'},
         )
 
     # Check if the user has a custom task model

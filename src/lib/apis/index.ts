@@ -1736,11 +1736,18 @@ export interface ModelConfig {
 	params: ModelParams;
 }
 
+export interface ModelTaskSettings {
+	enabled: boolean;
+	followUpGeneration: boolean;
+}
+
 export interface ModelMeta {
 	toolIds: never[];
 	description?: string;
+	chatPlaceholder?: string | null;
 	capabilities?: object;
 	profile_image_url?: string;
+	taskSettings?: ModelTaskSettings;
 }
 
 export interface ModelParams {}

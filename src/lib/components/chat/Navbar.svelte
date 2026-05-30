@@ -114,15 +114,7 @@
 			"
 				>
 					{#if showModelSelector}
-						{#if $user?.role === 'admin'}
-							<ModelSelector bind:selectedModels showSetDefault={!shareEnabled} />
-						{:else}
-							<div
-								class="h-9 flex items-center px-2 text-lg font-semibold text-gray-800 dark:text-gray-100 truncate"
-							>
-								{selectedModel?.name ?? '智能营销助手'}
-							</div>
-						{/if}
+						<ModelSelector bind:selectedModels showSetDefault={!shareEnabled} />
 					{/if}
 				</div>
 

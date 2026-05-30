@@ -308,3 +308,7 @@ dist
 cypress/videos
 cypress/screenshots
 .vscode/settings.json
+
+# CLI各插件设置
+.codegraph
+.codex
