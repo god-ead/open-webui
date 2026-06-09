@@ -10,7 +10,7 @@ import json
 import logging
 import re
 import time
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 import requests
@@ -42,7 +42,7 @@ _SYSTEM_PROMPT = """你是一个企业信息搜索与提取助手。请使用联
 然后从搜索结果中提取结构化数据。请尽量搜索多个维度的信息。
 
 重要原则：
-1. 时效性：优先采用最近一年（2025年4月至今）的数据，如果有多个来源，选择最新的。
+1. 时效性：优先采用执行时最近一年的数据，如果有多个来源，选择最新的。
 2. 合理估算：当精确数据不可得时，可以根据行业地位、员工规模、融资轮次、公开报道等进行合理估算，并在相关字段注明"估算"。不要轻易填 null。
 3. 对于未上市但知名度高的企业（如字节跳动、华为、蚂蚁集团等），营收、员工规模等信息虽未官方披露，但媒体报道和行业分析中有大量可参考数据，请积极搜索并给出估算值。"""
 
@@ -72,7 +72,7 @@ _SEARCH_MATCHES_PROMPT = """请搜索用户输入可能对应的企业实体，�
 
 # ── Round 1a：工商基础信息 ──
 _PROMPT_ROUND1A = """请搜索企业「{company_name}」的基本工商注册信息。
-请优先搜索最近一年（2025-2026年）的最新数据。
+请优先搜索执行时最近一年的最新数据。
 优先使用以下数据源（按优先级排列）：
 1. 国家企业信用信息公示系统（gsxt.gov.cn）
 2. 天眼查（tianyancha.com）
@@ -111,7 +111,7 @@ _PROMPT_ROUND1A = """请搜索企业「{company_name}」的基本工商注册信
 
 # ── Round 1b：财务 + 海外 + 治理 ──
 _PROMPT_ROUND1B = """请搜索企业「{company_name}」的财务状况、海外业务和公司治理结构。
-请优先搜索最近一年（2025-2026年）的数据。
+请优先搜索执行时最近一年的数据。
 优先使用以下数据源：
 1. 企业年报、财报（巨潮资讯 cninfo.com.cn、东方财富 eastmoney.com）
 2. 天眼查、企查查的企业详情页
@@ -151,7 +151,7 @@ _PROMPT_ROUND1B = """请搜索企业「{company_name}」的财务状况、海外
 
 # ── Round 2：招聘 + 市场营销活动 ──
 _PROMPT_ROUND2 = """请搜索企业「{company_name}」的招聘信息和市场营销活动。
-请优先搜索最近一年（2025-2026年）的最新数据。
+请优先搜索执行时最近一年的最新数据。
 
 招聘信息搜索建议（按优先级）：
 1. 该企业官网的"加入我们"/"招聘"页面（链接最稳定）
@@ -194,7 +194,7 @@ _PROMPT_ROUND2 = """请搜索企业「{company_name}」的招聘信息和市场�
 
 # ── Round 3：诉讼记录 + 技术产品 ──
 _PROMPT_ROUND3 = """请搜索企业「{company_name}」的知识产权诉讼记录和技术产品情况。
-请优先搜索最近一年（2025-2026年）的最新数据。
+请优先搜索执行时最近一年的最新数据。
 
 诉讼信息搜索建议（按优先级）：
 1. 天眼查的"司法风险"页面（tianyancha.com）
@@ -239,7 +239,7 @@ _PROMPT_ROUND3 = """请搜索企业「{company_name}」的知识产权诉讼记�
 
 # ── Round 4：企业联系方式 ──
 _PROMPT_ROUND4_CONTACT = """请搜索企业「{company_name}」的公开联系方式，尽量多找电话号码。
-请优先搜索最近一年（2025-2026年）的最新联系方式。
+请优先搜索执行时最近一年的最新联系方式。
 
 重点搜索以下渠道的联系方式（按优先级）：
 1. 企业官网上的"联系我们"页面（最优先）
@@ -282,7 +282,7 @@ _PROMPT_ROUND4_CONTACT = """请搜索企业「{company_name}」的公开联系�
 只返回 JSON，不要其他文字。"""
 
 _ENRICH_PROMPT = """请搜索企业「{company_name}」的以下补充信息，并提取结构化数据。
-请优先搜索最近一年（2025-2026年）的数据。
+请优先搜索执行时最近一年的数据。
 如果信息不确定或未提及，对应字段填 null。
 涉及到金钱的，请转换成人民币。
 
@@ -308,10 +308,12 @@ class QwenCollector(BaseCollector):
         api_key: str = "",
         base_url: str = "",
         model: str = "",
+        timeout_seconds: int = 600,
     ) -> None:
         self._api_key = api_key
         self._base_url = (base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1").rstrip("/")
         self._model = model or "qwen3.5-plus"
+        self._timeout_seconds = max(1, int(timeout_seconds))
         self._session = _make_session()
         # openai client for more robust SSL handling
         self._openai_client = None
@@ -321,7 +323,7 @@ class QwenCollector(BaseCollector):
                 self._openai_client = OpenAI(
                     api_key=api_key,
                     base_url=self._base_url,
-                    timeout=600,
+                    timeout=self._timeout_seconds,
                     max_retries=3,
                 )
             except ImportError:
@@ -389,7 +391,7 @@ class QwenCollector(BaseCollector):
                     self._merge_extracted(raw, result)
                     logger.info("Round %s OK for %s", label, company_id)
             except Exception:
-                logger.error("Kimi round %s failed for %s", label, company_id, exc_info=True)
+                logger.error("Qwen round %s failed for %s", label, company_id, exc_info=True)
 
         # Keep original input name for report; store Qwen's resolved name in business_info
         resolved_name = (raw.business_info.get("name")
@@ -467,7 +469,7 @@ class QwenCollector(BaseCollector):
                     )
                 )
         except Exception:
-            logger.debug("Kimi enrichment failed", exc_info=True)
+            logger.debug("Qwen enrichment failed", exc_info=True)
 
         return raw_data
 
@@ -517,13 +519,14 @@ class QwenCollector(BaseCollector):
                 result = self._call_qwen_once(prompt)
                 return result
             except Exception as exc:
-                logger.warning("Kimi call attempt %d/%d failed: %s", attempt, max_attempts, exc)
+                logger.warning("Qwen call attempt %d/%d failed: %s", attempt, max_attempts, exc)
                 if attempt < max_attempts:
                     time.sleep(5 * attempt)
         return None
 
     def _call_qwen_once(self, prompt: str) -> dict[str, Any] | None:
         """Single attempt to call Qwen via DashScope."""
+        prompt = f"当前日期：{date.today().isoformat()}。\n{prompt}"
         if self._openai_client is not None:
             return self._call_via_openai(prompt)
         return self._call_via_requests(prompt)
@@ -575,13 +578,13 @@ class QwenCollector(BaseCollector):
                 f"{self._base_url}/chat/completions",
                 headers=headers,
                 json=payload,
-                timeout=(30, 600),
+                timeout=(30, self._timeout_seconds),
                 stream=False,
             )
             resp.raise_for_status()
             data = resp.json()
         except Exception as exc:
-            logger.error("Kimi API request failed: %s", exc)
+            logger.error("Qwen API request failed: %s", exc)
             return None
 
         choice = data.get("choices", [{}])[0]
@@ -613,5 +616,5 @@ class QwenCollector(BaseCollector):
         try:
             return json.loads(content)
         except json.JSONDecodeError as exc:
-            logger.warning("Failed to parse Kimi JSON response: %s", exc)
+            logger.warning("Failed to parse Qwen JSON response: %s", exc)
             return None
