@@ -10,33 +10,44 @@ import json
 import logging
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import date, datetime
+from threading import local
 from typing import Any
 
 import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
 from .base import BaseCollector
 from ..models import CompanyMatch, DataSource, RawCompanyData
 
 logger = logging.getLogger(__name__)
 
+MAX_PARALLEL_ROUNDS = 5
+MAX_QWEN_ATTEMPTS = 3
+RETRY_DELAY_SECONDS = 5
+
 
 def _make_session() -> requests.Session:
-    """Create a requests Session with retry on connection/SSL errors."""
-    session = requests.Session()
-    retry = Retry(
-        total=5,
-        backoff_factor=3,
-        status_forcelist=[429, 500, 502, 503, 504],
-        allowed_methods=["POST", "GET"],
-        raise_on_status=False,
-    )
-    adapter = HTTPAdapter(max_retries=retry)
-    session.mount("https://", adapter)
-    session.mount("http://", adapter)
-    return session
+    """创建不包含隐式重试策略的 HTTP 会话。"""
+    return requests.Session()
+
+
+@dataclass(frozen=True)
+class _QwenCallResult:
+    payload: dict[str, Any] | None
+    attempts: int
+    error: str | None
+
+
+@dataclass(frozen=True)
+class _RoundResult:
+    label: str
+    payload: dict[str, Any] | None
+    attempts: int
+    elapsed_seconds: float
+    error: str | None
+
 
 _SYSTEM_PROMPT = """你是一个企业信息搜索与提取助手。请使用联网搜索功能，搜索指定企业的公开信息，
 然后从搜索结果中提取结构化数据。请尽量搜索多个维度的信息。
@@ -308,26 +319,38 @@ class QwenCollector(BaseCollector):
         api_key: str = "",
         base_url: str = "",
         model: str = "",
-        timeout_seconds: int = 600,
+        timeout_seconds: int = 300,
     ) -> None:
+        """
+        初始化 Qwen 企业信息采集器
+
+        参数：
+            api_key:
+                - Qwen OpenAI 兼容接口的 API Key
+            base_url:
+                - API 基础地址；为空时使用阿里云 DashScope 兼容地址
+            model:
+                - 调用的模型名称；为空时使用默认模型
+            timeout_seconds:
+                - 单次网络请求的读取超时时间，单位为秒
+
+        说明：
+            - OpenAI 客户端和 requests 会话均在线程首次使用时创建
+            - 每个工作线程维护独立的传输客户端，避免跨线程共享连接状态
+        """
         self._api_key = api_key
         self._base_url = (base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1").rstrip("/")
         self._model = model or "qwen3.5-plus"
         self._timeout_seconds = max(1, int(timeout_seconds))
-        self._session = _make_session()
-        # openai client for more robust SSL handling
-        self._openai_client = None
+        self._transport_local = local()
+        self._openai_client_factory = None
         if api_key:
             try:
                 from openai import OpenAI
-                self._openai_client = OpenAI(
-                    api_key=api_key,
-                    base_url=self._base_url,
-                    timeout=self._timeout_seconds,
-                    max_retries=3,
-                )
             except ImportError:
                 pass
+            else:
+                self._openai_client_factory = OpenAI
 
     def is_configured(self) -> bool:
         return bool(self._api_key)
@@ -337,7 +360,12 @@ class QwenCollector(BaseCollector):
         if not self._api_key:
             return []
         # 企业实体识别/消歧：对存在多个公司的输入名称，返回 "候选列表"
-        result = self._call_qwen(_SEARCH_MATCHES_PROMPT.format(company_name=company_name))
+        call_result = self._call_qwen(
+            _SEARCH_MATCHES_PROMPT.format(company_name=company_name),
+            company_id=company_name,
+            round_label="search",
+        )
+        result = call_result.payload
         matches = self._parse_search_matches(result)
         if matches:
             return matches
@@ -353,15 +381,26 @@ class QwenCollector(BaseCollector):
         ]
 
     def collect(self, company_id: str) -> RawCompanyData:
-        """Collect comprehensive company data via Qwen web search.
+        """
+        并行执行五轮企业公开信息采集，并按固定轮次顺序合并结果
 
-        Splits into four rounds for better data quality:
-        - Round 1a: basic business info
-        - Round 1b: financials, overseas, governance
-        - Round 2: recruitment, market activity
-        - Round 3: litigation, tech products
-        Results are merged into a single RawCompanyData.
-        Each round's _sources are collected into DataSource entries.
+        参数：
+            company_id:
+                - 待采集企业的名称或唯一标识
+
+        执行流程：
+            1. 将基础工商、财务治理、招聘营销、诉讼技术和联系方式五轮任务
+               提交到有界线程池
+            2. 每轮独立调用 Qwen，并在轮次内部完成重试和耗时统计
+            3. 等待所有轮次结束后，按照原始轮次定义顺序合并有效数据
+            4. 根据成功轮次数记录 full_collection、partial_collection
+               或 collection_failed 状态
+
+        返回：
+            RawCompanyData:
+                - 合并后的企业原始数据
+                - 单轮失败不会丢弃其他成功轮次的数据
+                - 所有轮次失败时返回仅包含企业标识和失败状态的数据
         """
         raw = RawCompanyData(company_id=company_id, company_name=company_id)
         if not self._api_key:
@@ -371,39 +410,167 @@ class QwenCollector(BaseCollector):
         rounds = [
             ("1a-基础工商", _PROMPT_ROUND1A),
             ("1b-财务治理", _PROMPT_ROUND1B),
-            ("2-招聘营销",  _PROMPT_ROUND2),
-            ("3-诉讼技术",  _PROMPT_ROUND3),
-            ("4-联系方式",  _PROMPT_ROUND4_CONTACT),
+            ("2-招聘营销", _PROMPT_ROUND2),
+            ("3-诉讼技术", _PROMPT_ROUND3),
+            ("4-联系方式", _PROMPT_ROUND4_CONTACT),
         ]
 
-        for label, prompt_tpl in rounds:
-            try:
-                result = self._call_qwen(prompt_tpl.format(company_name=company_id))
-                if result:
-                    # Collect per-section _source_url into DataSource entries
-                    for section_name, section_data in result.items():
-                        if isinstance(section_data, dict):
-                            url = section_data.get("_source_url")
-                            if isinstance(url, str) and url.startswith("http"):
-                                raw.sources.append(
-                                    DataSource("qwen_web_search", url, now, section_name)
-                                )
-                    self._merge_extracted(raw, result)
-                    logger.info("Round %s OK for %s", label, company_id)
-            except Exception:
-                logger.error("Qwen round %s failed for %s", label, company_id, exc_info=True)
+        started_at = time.perf_counter()
+        max_workers = min(MAX_PARALLEL_ROUNDS, len(rounds))
+        logger.info(
+            "Qwen collection started: company=%s rounds=%d max_workers=%d",
+            company_id,
+            len(rounds),
+            max_workers,
+        )
+
+        with ThreadPoolExecutor(
+            max_workers=max_workers,
+            thread_name_prefix="company-profile-qwen",
+        ) as executor:
+            futures = [
+                executor.submit(
+                    self._collect_round,
+                    label,
+                    prompt_tpl.format(company_name=company_id),
+                    company_id,
+                )
+                for label, prompt_tpl in rounds
+            ]
+
+            round_results: list[_RoundResult] = []
+            for (label, _), future in zip(rounds, futures):
+                try:
+                    round_results.append(future.result())
+                except Exception as exc:
+                    logger.error(
+                        "Qwen round crashed: company=%s round=%s",
+                        company_id,
+                        label,
+                        exc_info=True,
+                    )
+                    round_results.append(
+                        _RoundResult(
+                            label=label,
+                            payload=None,
+                            attempts=0,
+                            elapsed_seconds=0.0,
+                            error=f"{type(exc).__name__}: {exc}",
+                        )
+                    )
+
+        successful_rounds = 0
+        for round_result in round_results:
+            result = round_result.payload
+            if not result:
+                continue
+            successful_rounds += 1
+            # Merge only on the caller thread and in declared round order.
+            for section_name, section_data in result.items():
+                if isinstance(section_data, dict):
+                    url = section_data.get("_source_url")
+                    if isinstance(url, str) and url.startswith("http"):
+                        raw.sources.append(
+                            DataSource("qwen_web_search", url, now, section_name)
+                        )
+            self._merge_extracted(raw, result)
+
+        failed_rounds = len(rounds) - successful_rounds
+        elapsed_seconds = time.perf_counter() - started_at
+        if successful_rounds == 0:
+            logger.warning(
+                "Qwen collection completed: company=%s all %d rounds failed elapsed_seconds=%.2f",
+                company_id,
+                len(rounds),
+                elapsed_seconds,
+            )
+        else:
+            logger.info(
+                "Qwen collection completed: company=%s successful_rounds=%d failed_rounds=%d "
+                "elapsed_seconds=%.2f",
+                company_id,
+                successful_rounds,
+                failed_rounds,
+                elapsed_seconds,
+            )
 
         # Keep original input name for report; store Qwen's resolved name in business_info
-        resolved_name = (raw.business_info.get("name")
-                     or raw.business_info.get("Name"))
+        resolved_name = raw.business_info.get("name") or raw.business_info.get("Name")
         if resolved_name and resolved_name != company_id:
             raw.business_info["resolved_name"] = resolved_name
         # company_name stays as the original input (company_id)
 
+        # 记录 web_search 状态
+        status = (
+            "full_collection"
+            if successful_rounds == len(rounds)
+            else "partial_collection"
+            if successful_rounds > 0
+            else "collection_failed"
+        )
+
         raw.sources.append(
-            DataSource("qwen_web_search", "qwen://web_search", now, "full_collection")
+            DataSource("qwen_web_search", "qwen://web_search", now, status)
         )
         return raw
+
+    def _collect_round(
+        self,
+        label: str,
+        prompt: str,
+        company_id: str,
+    ) -> _RoundResult:
+        """
+        执行单轮 Qwen 采集并记录运行状态
+
+        参数：
+            label:
+                - 当前采集轮次的可读名称，用于日志定位
+            prompt:
+                - 已填充企业名称的完整提示词
+            company_id:
+                - 当前采集企业的名称或唯一标识
+
+        返回：
+            _RoundResult:
+                - payload: 成功解析的结构化结果，失败时为 None
+                - attempts: 实际调用次数
+                - elapsed_seconds: 当前轮次总耗时
+                - error: 最后一次失败原因，成功时为 None
+        """
+        started_at = time.perf_counter()
+        call_result = self._call_qwen(
+            prompt,
+            company_id=company_id,
+            round_label=label,
+        )
+        elapsed_seconds = time.perf_counter() - started_at
+
+        if call_result.payload:
+            logger.debug(
+                "Qwen round completed: company=%s round=%s attempts=%d elapsed_seconds=%.2f",
+                company_id,
+                label,
+                call_result.attempts,
+                elapsed_seconds,
+            )
+        else:
+            logger.warning(
+                "Qwen round failed: company=%s round=%s attempts=%d elapsed_seconds=%.2f error=%s",
+                company_id,
+                label,
+                call_result.attempts,
+                elapsed_seconds,
+                call_result.error or "empty response",
+            )
+
+        return _RoundResult(
+            label=label,
+            payload=call_result.payload,
+            attempts=call_result.attempts,
+            elapsed_seconds=elapsed_seconds,
+            error=call_result.error,
+        )
 
     @staticmethod
     def _merge_extracted(raw: RawCompanyData, extracted: dict[str, Any]) -> None:
@@ -434,9 +601,12 @@ class QwenCollector(BaseCollector):
             return raw_data
 
         try:
-            extracted = self._call_qwen(
-                _ENRICH_PROMPT.format(company_name=raw_data.company_name)
+            call_result = self._call_qwen(
+                _ENRICH_PROMPT.format(company_name=raw_data.company_name),
+                company_id=raw_data.company_name,
+                round_label="enrich",
             )
+            extracted = call_result.payload
             if extracted:
                 now = datetime.now()
                 rev = extracted.get("estimated_revenue")
@@ -510,35 +680,121 @@ class QwenCollector(BaseCollector):
 
         return matches
 
-    def _call_qwen(self, prompt: str) -> dict[str, Any] | None:
-        """Call Qwen with DashScope OpenAI-compatible web search enabled."""
-        # Application-level retry for SSL/connection errors
-        max_attempts = 3
-        for attempt in range(1, max_attempts + 1):
+    def _call_qwen(
+        self,
+        prompt: str,
+        company_id: str = "-",
+        round_label: str = "-",
+    ) -> _QwenCallResult:
+        """
+        使用统一的应用层重试策略调用 Qwen
+
+        参数：
+            prompt:
+                - 发送给 Qwen 的用户提示词
+            company_id:
+                - 当前企业名称或标识，用于关联并发请求日志
+            round_label:
+                - 当前请求所属轮次，用于区分并发执行的提示词
+
+        重试策略：
+            - 最多调用 MAX_QWEN_ATTEMPTS 次
+            - 异常、空响应或无法解析的响应均视为本次失败
+            - 每次重试前按照 RETRY_DELAY_SECONDS * 当前次数递增等待
+
+        返回：
+            _QwenCallResult:
+                - payload: 成功解析的字典，最终失败时为 None
+                - attempts: 实际尝试次数
+                - error: 最后一次失败原因，成功时为 None
+        """
+        last_error: str | None = None
+        for attempt in range(1, MAX_QWEN_ATTEMPTS + 1):
             try:
                 result = self._call_qwen_once(prompt)
-                return result
+                if result:
+                    return _QwenCallResult(
+                        payload=result,
+                        attempts=attempt,
+                        error=None,
+                    )
+                last_error = "empty or invalid response"
             except Exception as exc:
-                logger.warning("Qwen call attempt %d/%d failed: %s", attempt, max_attempts, exc)
-                if attempt < max_attempts:
-                    time.sleep(5 * attempt)
-        return None
+                last_error = f"{type(exc).__name__}: {exc}"
+
+            if attempt < MAX_QWEN_ATTEMPTS:
+                logger.debug(
+                    "Qwen retry scheduled: company=%s round=%s attempt=%d/%d error=%s",
+                    company_id,
+                    round_label,
+                    attempt,
+                    MAX_QWEN_ATTEMPTS,
+                    last_error,
+                )
+                time.sleep(RETRY_DELAY_SECONDS * attempt)
+
+        return _QwenCallResult(
+            payload=None,
+            attempts=MAX_QWEN_ATTEMPTS,
+            error=last_error,
+        )
+
+    def _get_openai_client(self):
+        """获取当前线程专用的 OpenAI 客户端；未启用 SDK 时返回 None。"""
+        if self._openai_client_factory is None:
+            return None
+
+        client = getattr(self._transport_local, "openai_client", None)
+        if client is None:
+            client = self._openai_client_factory(
+                api_key=self._api_key,
+                base_url=self._base_url,
+                timeout=self._timeout_seconds,
+                max_retries=0,
+            )
+            self._transport_local.openai_client = client
+        return client
+
+    def _get_session(self) -> requests.Session:
+        """获取当前线程专用的 requests 会话，不在线程之间共享连接状态。"""
+        session = getattr(self._transport_local, "session", None)
+        if session is None:
+            session = _make_session()
+            self._transport_local.session = session
+        return session
 
     def _call_qwen_once(self, prompt: str) -> dict[str, Any] | None:
-        """Single attempt to call Qwen via DashScope."""
+        """为提示词补充当前日期，并通过可用传输方式执行一次 Qwen 请求。"""
         prompt = f"当前日期：{date.today().isoformat()}。\n{prompt}"
-        if self._openai_client is not None:
+        if self._openai_client_factory is not None:
             return self._call_via_openai(prompt)
         return self._call_via_requests(prompt)
 
     def _call_via_openai(self, prompt: str) -> dict[str, Any] | None:
-        """Call Qwen using the openai library (httpx backend, better SSL)."""
+        """
+        使用当前线程专用的 OpenAI 客户端调用 Qwen
+
+        参数：
+            prompt:
+                - 已补充当前日期的用户提示词
+
+        返回：
+            dict[str, Any] | None:
+                - 模型响应中解析出的 JSON 字典
+                - 响应内容为空或无法解析时返回 None
+
+        异常：
+            - 网络错误、超时和服务端错误向上抛出，由应用层统一重试
+        """
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
         ]
+        client = self._get_openai_client()
+        if client is None:
+            return self._call_via_requests(prompt)
 
-        response = self._openai_client.chat.completions.create(
+        response = client.chat.completions.create(
             model=self._model,
             messages=messages,
             extra_body={
@@ -548,7 +804,6 @@ class QwenCollector(BaseCollector):
                     "enable_search_extension": True,
                 },
             },
-
         )
         choice = response.choices[0]
         content = (choice.message.content or "").strip()
@@ -557,7 +812,22 @@ class QwenCollector(BaseCollector):
         return self._extract_json(content)
 
     def _call_via_requests(self, prompt: str) -> dict[str, Any] | None:
-        """Fallback: call Qwen using requests."""
+        """
+        使用当前线程专用的 requests 会话调用 Qwen
+
+        参数：
+            prompt:
+                - 已补充当前日期的用户提示词
+
+        返回：
+            dict[str, Any] | None:
+                - 模型响应中解析出的 JSON 字典
+                - 响应内容为空或无法解析时返回 None
+
+        异常：
+            - 网络错误、超时、非成功 HTTP 状态和响应解析错误向上抛出，
+              由应用层统一重试
+        """
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
@@ -573,19 +843,15 @@ class QwenCollector(BaseCollector):
             "stream": False,
         }
 
-        try:
-            resp = self._session.post(
-                f"{self._base_url}/chat/completions",
-                headers=headers,
-                json=payload,
-                timeout=(30, self._timeout_seconds),
-                stream=False,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-        except Exception as exc:
-            logger.error("Qwen API request failed: %s", exc)
-            return None
+        resp = self._get_session().post(
+            f"{self._base_url}/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=(30, self._timeout_seconds),
+            stream=False,
+        )
+        resp.raise_for_status()
+        data = resp.json()
 
         choice = data.get("choices", [{}])[0]
         message = choice.get("message", {})
@@ -616,5 +882,5 @@ class QwenCollector(BaseCollector):
         try:
             return json.loads(content)
         except json.JSONDecodeError as exc:
-            logger.warning("Failed to parse Qwen JSON response: %s", exc)
+            logger.debug("Failed to parse Qwen JSON response: %s", exc)
             return None

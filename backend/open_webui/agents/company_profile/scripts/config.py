@@ -26,4 +26,5 @@ def get_qwen_config(secrets: dict[str, Any] | None = None) -> dict[str, str]:
         "api_key": qwen.get("api_key", ""),
         "base_url": qwen.get("base_url", ""),
         "model": qwen.get("model", ""),
+        "timeout_seconds": qwen.get("timeout_seconds", 300),
     }
