@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from open_webui.utils.misc import get_last_user_message
-
+from .adapters.openwebui import get_last_user_message
 from .entry import run_company_profile_pipe
 
 

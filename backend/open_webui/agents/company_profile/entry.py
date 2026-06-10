@@ -5,7 +5,10 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from .bridge import CompanyProfileBridge
+from .adapters.openwebui import config_from_valves, format_configuration_error
+from .application.errors import CompanyNotFoundError
+from .application.match_policy import format_auto_selected_status
+from .application.service import CompanyProfileService
 from .intent import IntentInterpreter
 
 logger = logging.getLogger(__name__)
@@ -58,8 +61,8 @@ async def run_company_profile_pipe(
     if valves is None:
         return "企业分析 Pipe 尚未初始化 valves，请联系管理员。"
 
-    bridge = CompanyProfileBridge(valves)
-    config_error = bridge.get_configuration_error()
+    config = config_from_valves(valves)
+    config_error = format_configuration_error(config)
     if config_error:
         logger.warning("企业画像请求中止：配置校验失败，原因=%s", config_error)
         return config_error
@@ -96,50 +99,35 @@ async def run_company_profile_pipe(
                 f"正在调查 {intent['company_name']}，通常需要4~7分钟，实际时间将根据公司复杂程度有所变化",
                 done=False,
             )
-            result = await asyncio.to_thread(bridge.analyze_company, intent["company_name"])
-            result_company_name = intent["company_name"]
-            if hasattr(result, "matches"):
-                await _emit_status(
-                    event_emitter,
-                    "发现多个匹配企业，正在自动选择最高置信度企业",
-                    done=False,
+            try:
+                profile_result = await asyncio.to_thread(
+                    CompanyProfileService(config).generate,
+                    intent["company_name"],
                 )
-                selected_match = bridge.pick_best_match(result.matches)
-                if selected_match is None:
-                    await _emit_status(
-                        event_emitter,
-                        f"未找到 {intent['company_name']} 的可分析公开信息",
-                        done=True,
-                    )
-                    return _NO_MATCH_MESSAGE
+            except CompanyNotFoundError:
                 await _emit_status(
                     event_emitter,
-                    bridge.format_auto_selected_status(result.matches, selected_match),
-                    done=False,
-                )
-                result = await asyncio.to_thread(bridge.analyze_match, selected_match)
-                result_company_name = selected_match.company_name
-
-            if bridge.is_empty_result(result):
-                await _emit_status(
-                    event_emitter,
-                    f"未找到 {result_company_name} 的可分析公开信息",
+                    f"未找到 {intent['company_name']} 的可分析公开信息",
                     done=True,
                 )
                 return _NO_MATCH_MESSAGE
 
+            if profile_result.auto_selected and profile_result.selected_match:
+                await _emit_status(
+                    event_emitter,
+                    format_auto_selected_status(
+                        list(profile_result.candidates),
+                        profile_result.selected_match,
+                    ),
+                    done=False,
+                )
+
             await _emit_status(
                 event_emitter,
-                f"正在整理 {result_company_name} 的画像与建议",
-                done=False,
-            )
-            markdown = bridge.render_markdown(result)
-            await _emit_status(
-                event_emitter,
-                f"已完成 {result_company_name} 企业画像",
+                f"已完成 {profile_result.company_name} 企业画像",
                 done=True,
             )
-            return markdown
+            return profile_result.markdown
 
         await _emit_status(
             event_emitter,
