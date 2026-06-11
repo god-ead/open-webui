@@ -6,10 +6,10 @@ import asyncio
 import logging
 
 from .adapters.openwebui import config_from_valves, format_configuration_error
-from .application.errors import CompanyNotFoundError
 from .application.match_policy import format_auto_selected_status
 from .application.service import CompanyProfileService
 from .intent import IntentInterpreter
+from .lookalike.engine import MultiMatchResult
 
 logger = logging.getLogger(__name__)
 
@@ -96,38 +96,55 @@ async def run_company_profile_pipe(
         if intent["intent"] == "analyze":
             await _emit_status(
                 event_emitter,
-                f"正在调查 {intent['company_name']}，通常需要4~7分钟，实际时间将根据公司复杂程度有所变化",
+                f"正在调查 {intent['company_name']}，通常需要2~4分钟，实际时间将根据公司复杂程度有所变化",
                 done=False,
             )
-            try:
-                profile_result = await asyncio.to_thread(
-                    CompanyProfileService(config).generate,
-                    intent["company_name"],
-                )
-            except CompanyNotFoundError:
+            service = CompanyProfileService(config)
+            result = await asyncio.to_thread(
+                service.analyze_company,
+                intent["company_name"],
+            )
+            result_company_name = intent["company_name"]
+
+            if isinstance(result, MultiMatchResult):
+                selected_match = service.pick_best_match(result.matches)
+                if selected_match is None:
+                    await _emit_status(
+                        event_emitter,
+                        f"未找到 {intent['company_name']} 的可分析公开信息",
+                        done=True,
+                    )
+                    return _NO_MATCH_MESSAGE
+
                 await _emit_status(
                     event_emitter,
-                    f"未找到 {intent['company_name']} 的可分析公开信息",
+                    format_auto_selected_status(
+                        result.matches,
+                        selected_match,
+                    ),
+                    done=False,
+                )
+                result = await asyncio.to_thread(
+                    service.analyze_match,
+                    selected_match,
+                )
+                result_company_name = selected_match.company_name
+
+            if service.is_empty_result(result):
+                await _emit_status(
+                    event_emitter,
+                    f"未找到 {result_company_name} 的可分析公开信息",
                     done=True,
                 )
                 return _NO_MATCH_MESSAGE
 
-            if profile_result.auto_selected and profile_result.selected_match:
-                await _emit_status(
-                    event_emitter,
-                    format_auto_selected_status(
-                        list(profile_result.candidates),
-                        profile_result.selected_match,
-                    ),
-                    done=False,
-                )
-
+            markdown = service.render_markdown(result)
             await _emit_status(
                 event_emitter,
-                f"已完成 {profile_result.company_name} 企业画像",
+                f"已完成 {result_company_name} 企业画像",
                 done=True,
             )
-            return profile_result.markdown
+            return markdown
 
         await _emit_status(
             event_emitter,
