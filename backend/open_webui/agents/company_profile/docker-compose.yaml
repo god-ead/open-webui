@@ -1,0 +1,68 @@
+include:
+  - path: ./docker-compose.infra.yaml
+
+x-service-build: &service-build
+  context: .
+  dockerfile: ./service/Dockerfile
+  args:
+    BASE_IMAGE_REGISTRY: ${BASE_IMAGE_REGISTRY:-}
+
+services:
+  service-1:
+    image: ${SERVICE_IMAGE:-company-profile-service:v0.1.0}
+    build:
+      context: .
+      dockerfile: ./service/Dockerfile
+      args:
+        BASE_IMAGE_REGISTRY: ${BASE_IMAGE_REGISTRY:-}
+    container_name: ${SERVICE_NAME:-company-profile}-service-1
+    restart: always
+    stop_grace_period: 60s
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/appdb
+      TASK_QUEUE: task_queue
+      RESULT_QUEUE: result_queue
+      HANDLER_MODULES: ${HANDLER_MODULES:-handlers.company_profile:CompanyProfileHandler}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      LLM_MODEL: ${LLM_MODEL:-qwen3.5-plus}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-180}
+      SERVICE_NAME: ${SERVICE_NAME:-company-profile}
+      TZ: Asia/Shanghai
+      SERVICE_ID: service-1
+    networks:
+      - app_net
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  service-2:
+    image: ${SERVICE_IMAGE:-company-profile-service:v0.1.0}
+    container_name: ${SERVICE_NAME:-company-profile}-service-2
+    restart: always
+    stop_grace_period: 60s
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/appdb
+      TASK_QUEUE: task_queue
+      RESULT_QUEUE: result_queue
+      HANDLER_MODULES: ${HANDLER_MODULES:-handlers.company_profile:CompanyProfileHandler}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      LLM_MODEL: ${LLM_MODEL:-qwen3.5-plus}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-180}
+      SERVICE_NAME: ${SERVICE_NAME:-company-profile}
+      TZ: Asia/Shanghai
+      SERVICE_ID: service-2
+    networks:
+      - app_net
+    depends_on:
+      service-1:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy

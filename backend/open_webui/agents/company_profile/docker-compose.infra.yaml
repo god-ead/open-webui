@@ -1,0 +1,225 @@
+x-common-env: &common-env
+  REDIS_URL: redis://redis:6379/0
+  DATABASE_URL: postgresql://postgres:postgres@postgres:5432/appdb
+  TASK_QUEUE: task_queue
+  RESULT_QUEUE: result_queue
+  TZ: Asia/Shanghai
+x-api-gateway-build: &api-gateway-build
+  context: ./api_gateway
+  args:
+    BASE_IMAGE_REGISTRY: ${BASE_IMAGE_REGISTRY}
+networks:
+  app_net:
+    driver: bridge
+volumes:
+  postgres_data: null
+  redis_data: null
+services:
+  postgres:
+    image: ${HARBOR_REGISTRY}${POSTGRES_IMAGE}
+    build:
+      context: ./postgres
+      args:
+        BASE_IMAGE_REGISTRY: ${BASE_IMAGE_REGISTRY}
+    container_name: ${SERVICE_NAME}-postgres
+    restart: always
+    command: postgres -c timezone=Asia/Shanghai
+    volumes:
+    - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: appdb
+      TZ: Asia/Shanghai
+    networks:
+    - app_net
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pg_isready -U postgres
+      interval: 5s
+      timeout: 3s
+      retries: 5
+  redis:
+    image: ${HARBOR_REGISTRY}${REDIS_IMAGE}
+    build:
+      context: ./redis
+      args:
+        BASE_IMAGE_REGISTRY: ${BASE_IMAGE_REGISTRY}
+    environment:
+      TZ: Asia/Shanghai
+    container_name: ${SERVICE_NAME}-redis
+    restart: always
+    volumes:
+    - redis_data:/data
+    networks:
+    - app_net
+    healthcheck:
+      test:
+      - CMD
+      - redis-cli
+      - ping
+      interval: 5s
+      timeout: 3s
+      retries: 5
+  api-gateway-1:
+    image: ${HARBOR_REGISTRY}${API_GATEWAY_IMAGE}
+    build: *api-gateway-build
+    container_name: ${SERVICE_NAME}-api-1
+    restart: always
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/appdb
+      TASK_QUEUE: task_queue
+      RESULT_QUEUE: result_queue
+      CALLBACK_MAX_RETRIES: ${CALLBACK_MAX_RETRIES:-3}
+      CALLBACK_RETRY_DELAY_SECONDS: ${CALLBACK_RETRY_DELAY_SECONDS:-2}
+      TZ: Asia/Shanghai
+      SERVICE_ID: api-gateway-1
+      SERVICE_PORT: '8001'
+    networks:
+    - app_net
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+  api-gateway-2:
+    image: ${HARBOR_REGISTRY}${API_GATEWAY_IMAGE}
+    build: *api-gateway-build
+    container_name: ${SERVICE_NAME}-api-2
+    restart: always
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/appdb
+      TASK_QUEUE: task_queue
+      RESULT_QUEUE: result_queue
+      CALLBACK_MAX_RETRIES: ${CALLBACK_MAX_RETRIES:-3}
+      CALLBACK_RETRY_DELAY_SECONDS: ${CALLBACK_RETRY_DELAY_SECONDS:-2}
+      TZ: Asia/Shanghai
+      SERVICE_ID: api-gateway-2
+      SERVICE_PORT: '8002'
+    networks:
+    - app_net
+    depends_on:
+      api-gateway-1:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+  api-gateway-3:
+    image: ${HARBOR_REGISTRY}${API_GATEWAY_IMAGE}
+    build: *api-gateway-build
+    container_name: ${SERVICE_NAME}-api-3
+    restart: always
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/appdb
+      TASK_QUEUE: task_queue
+      RESULT_QUEUE: result_queue
+      CALLBACK_MAX_RETRIES: ${CALLBACK_MAX_RETRIES:-3}
+      CALLBACK_RETRY_DELAY_SECONDS: ${CALLBACK_RETRY_DELAY_SECONDS:-2}
+      TZ: Asia/Shanghai
+      SERVICE_ID: api-gateway-3
+      SERVICE_PORT: '8003'
+    networks:
+    - app_net
+    depends_on:
+      api-gateway-1:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+  nginx:
+    image: ${HARBOR_REGISTRY}${NGINX_IMAGE}
+    build:
+      context: ./nginx
+      args:
+        BASE_IMAGE_REGISTRY: ${BASE_IMAGE_REGISTRY}
+    environment:
+      TZ: Asia/Shanghai
+    container_name: ${SERVICE_NAME}-nginx
+    restart: always
+    ports:
+    - ${NGINX_HOST}:80
+    networks:
+    - app_net
+    depends_on:
+    - api-gateway-1
+    - api-gateway-2
+    - api-gateway-3
+  scheduler:
+    image: ${HARBOR_REGISTRY}${SCHEDULER_IMAGE}
+    build:
+      context: ./scheduler
+      args:
+        BASE_IMAGE_REGISTRY: ${BASE_IMAGE_REGISTRY}
+    container_name: ${SERVICE_NAME}-scheduler
+    restart: always
+    volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/appdb
+      TASK_QUEUE: task_queue
+      RESULT_QUEUE: result_queue
+      TZ: Asia/Shanghai
+      CHECK_INTERVAL: '10'
+      HEARTBEAT_TIMEOUT: '300'
+      TASK_TIMEOUT_MINUTES: '20'
+      # Scheduler combines SERVICE_NAME and worker_id to locate worker containers.
+      SERVICE_NAME: ${SERVICE_NAME}
+    networks:
+    - app_net
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  monitor:
+    image: ${HARBOR_REGISTRY}${MONITOR_IMAGE}
+    build:
+      context: ./monitor
+      args:
+        BASE_IMAGE_REGISTRY: ${BASE_IMAGE_REGISTRY}
+    container_name: ${SERVICE_NAME}-monitor
+    restart: always
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/appdb
+      TASK_QUEUE: task_queue
+      RESULT_QUEUE: result_queue
+      SERVICE_NAME: ${SERVICE_NAME}
+      TZ: Asia/Shanghai
+    networks:
+    - app_net
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+  backup:
+    image: ${HARBOR_REGISTRY}${BACKUP_IMAGE}
+    build:
+      context: ./db_backup
+      args:
+        BASE_IMAGE_REGISTRY: ${BASE_IMAGE_REGISTRY}
+    container_name: ${SERVICE_NAME}-backup
+    restart: always
+    volumes:
+    - ./backups:/app/backups
+    environment:
+      DB_NAME: appdb
+      DB_USER: postgres
+      PGPASSWORD: postgres
+      DB_HOST: postgres
+      BACKUP_TIME: 0 2
+      TZ: Asia/Shanghai
+    networks:
+    - app_net
+    depends_on:
+      postgres:
+        condition: service_healthy
