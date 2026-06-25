@@ -41,6 +41,13 @@ class _QwenCallResult:
 
 
 @dataclass(frozen=True)
+class _QwenTextResult:
+    content: str | None
+    attempts: int
+    error: str | None
+
+
+@dataclass(frozen=True)
 class _RoundResult:
     label: str
     payload: dict[str, Any] | None
@@ -81,41 +88,77 @@ _SEARCH_MATCHES_PROMPT = """请搜索用户输入可能对应的企业实体，�
   ]
 }}"""
 
-# ── Round 1a：工商基础信息 ──
-_PROMPT_ROUND1A = """请搜索企业「{company_name}」的基本工商注册信息。
-请优先搜索执行时最近一年的最新数据。
-优先使用以下数据源（按优先级排列）：
-1. 国家企业信用信息公示系统（gsxt.gov.cn）
-2. 天眼查（tianyancha.com）
-3. 企查查（qcc.com）
-4. 爱企查（aiqicha.baidu.com）
-5. 百度百科、企业官网
-避免使用启信宝等数据更新较慢的平台。
-如果某项信息搜索不到或不确定，对应字段填 null。
-请在 _source_url 中填写你实际获取数据的网页地址（必须是可访问的稳定链接）。
+# ── Round 1a：工商基础信息（A1 证据搜索 + A2 事实核验） ──
+_PROMPT_ROUND1A_A1 = """请联网搜索「{company_name}」的工商信息。
+
+只收集以下字段相关信息：
+1. 企业名称
+2. 统一社会信用代码
+3. 注册号
+4. 法定代表人
+5. 经营状态
+6. 注册资本
+7. 成立日期
+8. 企业类型
+9. 所属行业
+10. 员工人数
+11. 所在城市
+12. 企业简介
+13. 经营范围
+14. 业务模式
+15. listing_status
+
+要求：
+- 优先搜索国家企业信用信息公示系统、企查查、天眼查、爱企查。
+- 不要推测，不要补全。
+- 业务模式只允许从 b2c/b2b2c/b2b_brand/b2b/g2b 中选择；没有依据就写“未找到”。
+- listing_status 只允许从 listed/soe/foreign/group/private/sme 中选择；没有依据就写“未找到”。
+- 找不到就写“未找到”，不要估算，不要为了填满字段而推断。
+- 所在城市只写省/市/区，例如“上海市”；不要把完整注册地址写成所在城市。
+- 每条信息后面必须标明数据来源名称，例如国家企业信用信息公示系统、企查查、天眼查、爱企查、企业官网。
+- 不强制提供可访问查询链接；如果搜索结果明确给出具体页面链接，可以附上链接。
+- 不要为了补充链接而自行拼接 URL，尤其不要把统一社会信用代码拼成爱企查 company_detail_ 形式链接。
+- 不要求返回 JSON，用简洁列表返回。"""
+
+_PROMPT_ROUND1A_A2 = """请只根据以下 A1 搜索结果，整理企业「{company_name}」的工商信息 JSON。
+
+不得新增 A1 中没有的信息。
+如果 A1 中没有找到，填 null。
+如果多个来源冲突，选择最新来源；无法判断新旧时选择可信度更高来源，并在 report_warnings 中说明。
+搜索页 URL 不得作为最终事实来源；如果只能找到搜索页，在 report_warnings 中说明。
+region 只填写省/市/区；如果 A1 只给出完整注册地址，请提取省市区并在 report_warnings 中说明。
+employee_scale 使用 A1 的员工人数原文；如果员工人数带年份或参保人数口径，保留在原文中。
+business_scope、business_model、listing_status 只能来自 A1 原文；没有依据填 null。
+sources 用于记录数据来源名称或平台名称，不强制提供 URL。
+如果 A1 提供了 URL 且该 URL 是平台首页、搜索页或疑似拼接链接，不要把它当作可靠链接，并在 report_warnings 中说明。
+
+A1 搜索结果：
+{a1_result}
 
 请以 JSON 格式返回：
-
 {{
   "business_info": {{
-    "name": "企业全称",
-    "foreign_name": "企业外文名（如有）",
-    "founder": "创始人姓名（如有）",
-    "legal_representative": "法定代表人姓名",
-    "registered_capital": 注册资本（单位：元，如5000万填50000000）,
-    "establishment_date": "成立日期，格式YYYY-MM-DD",
-    "business_status": "经营状态，如存续、注销等",
-    "industry": "所属行业",
-    "company_type": "企业类型，如有限责任公司(外商投资企业法人独资)",
-    "employee_scale": "员工规模，如1000人以上、500-999人、50-99人",
-    "region": "所在城市，如北京市、深圳市",
-    "main_business": "主营业务/经营范围简述",
-    "website_url": "官网地址",
-    "summary": "企业简介（100字以内）",
-    "business_model": "业务模式：b2c/b2b2c/b2b_brand/b2b/g2b",
-    "listing_status": "listed/soe/foreign/group/private/sme",
-    "_source_url": "本段信息的来源网页地址"
-  }}
+    "name": null,
+    "unified_social_credit_code": null,
+    "registration_number": null,
+    "legal_representative": null,
+    "business_status": null,
+    "registered_capital": null,
+    "establishment_date": null,
+    "company_type": null,
+    "industry": null,
+    "employee_scale": null,
+    "region": null,
+    "summary": null,
+    "main_business": null,
+    "business_scope": null,
+    "business_model": null,
+    "listing_status": null,
+    "_source_url": null
+  }},
+  "sources": [],
+  "conflicts": [],
+  "report_warnings": []
 }}
 
 只返回 JSON，不要其他文字。"""
@@ -248,49 +291,75 @@ _PROMPT_ROUND3 = """请搜索企业「{company_name}」的知识产权诉讼记�
 
 只返回 JSON，不要其他文字。"""
 
-# ── Round 4：企业联系方式 ──
-_PROMPT_ROUND4_CONTACT = """请搜索企业「{company_name}」的公开联系方式，尽量多找电话号码。
-请优先搜索执行时最近一年的最新联系方式。
+# ── Round 4：企业联系方式（B1 证据搜索 + B2 事实核验） ──
+_PROMPT_ROUND4_CONTACT_B1 = """请联网搜索企业「{company_name}」的公开联系方式，供后续整理为 contact_info。
 
-重点搜索以下渠道的联系方式（按优先级）：
-1. 企业官网上的"联系我们"页面（最优先）
-2. 天眼查/企查查上的企业联系电话
-3. 企业的品牌部/市场部/法务部/知识产权部的联系方式
-4. 企业的招聘页面上的HR联系电话
-5. 企业的客服电话、400电话、投诉电话
-6. 企业在招标网站、行业协会上留的联系方式
-7. 企业高管的公开联系方式（如LinkedIn、脉脉等）
+搜索重点按优先级执行：
+1. 官网联系方式：搜索「官网」「联系我们」「电话」「邮箱」。如果找到官网域名，继续搜索「官网域名 联系我们」「官网域名 contact」「官网域名 电话」「官网域名 邮箱」「官网域名 地址」。
+2. 官网相关页面：官网首页页脚、联系我们、加入我们/招聘、媒体联络、招标采购、法务/合规/知识产权页面。
+3. 补充来源：工商平台、招聘官网/高校宣讲页、公开招标采购页、行业协会页、年报/招股书/债券披露文件。
 
-特别关注：
-- 法务部/知识产权部/合规部的电话（维权相关）
-- 品牌部/市场部/广告部的电话（营销相关）
-- 采购部/行政部的电话
+只收集以下公开信息：
+- 总机/前台电话、客服电话/400电话、传真
+- 法务/知识产权/合规、品牌/市场/媒体、采购/行政、人事/招聘等部门电话
+- 企业公开邮箱、法务邮箱
+- 办公地址/总部地址
+- 有公开电话或公开邮箱的联系人
+- 最可靠来源页面 URL
 
-如果某项信息搜索不到，对应字段填 null 或空列表。
-请在 _source_url 中填写你实际获取数据的网页地址。
+采纳规则：
+- 优先采纳官网、年报/招股书/债券披露文件中的完整联系方式。
+- 第三方平台只能作为补充；如果只显示脱敏号码/邮箱，不要采纳。
+- 不要输出脱敏号码或脱敏邮箱原文，只写“发现脱敏信息，已剔除”。
+- 不要列出没有公开电话/邮箱的法人、高管、董事或联系人。
+- 不要猜测、补全、拼接官网、电话、邮箱或地址。
+- 每条有效信息必须包含：字段名、完整值、来源名称、来源 URL（没有则写未提供）、证据原文。
+- 找不到有效信息就写“未找到”。
 
-请以 JSON 格式返回：
+输出要求：
+- 不返回 JSON
+- 找不到就写“未找到”，不要为了填满字段而编造
+- 只输出三部分：
+  1. 有效联系方式证据
+  2. 已排除/未找到信息"""
 
+_PROMPT_ROUND4_CONTACT_B2 = """请只根据以下 B1 搜索结果，整理企业「{company_name}」的联系方式 JSON。
+
+B1 搜索结果：
+{b1_result}
+
+不得新增 B1 中没有的信息。
+如果 B1 中没有找到，填 null 或空列表。
+如果 B1 提到“主体未确认”、搜索页、平台首页、疑似拼接 URL，不要把它当作可靠来源。
+如果多个来源冲突，优先选择官网或最新来源；无法判断新旧时选择可信度更高来源。
+不允许输出任何脱敏数据：脱敏号码、脱敏邮箱、待核验、未找到不得写入 contact_info。
+固定电话、客服电话、400 电话、传真可写入对应电话字段或 other_phones。
+完整手机号只有在 B1 能证明联系人姓名/职务/部门/公司归属时，才能写入 contact_persons；无法确认归属时 contact_persons 保持空数组。
+contact_persons 的元素结构必须为 {{"name": "联系人姓名", "title": "职务", "phone": "电话", "source": "信息来源"}}，不存在的子字段填 null。
+_source_url 填最可靠的联系方式来源页面；没有可靠页面填 null。
+
+请只返回 JSON：
 {{
   "contact_info": {{
-    "official_phone": "企业总机/前台电话",
-    "customer_service": "客服电话/400电话",
-    "legal_dept_phone": "法务部/知识产权部电话",
-    "marketing_dept_phone": "品牌部/市场部电话",
-    "procurement_dept_phone": "采购部电话",
-    "hr_phone": "人事/招聘电话",
-    "other_phones": ["其他公开电话号码列表"],
-    "email": "企业公开邮箱",
-    "legal_email": "法务相关邮箱",
-    "address": "企业办公地址",
+    "official_phone": null,
+    "customer_service": null,
+    "legal_dept_phone": null,
+    "marketing_dept_phone": null,
+    "procurement_dept_phone": null,
+    "hr_phone": null,
+    "other_phones": [],
+    "email": null,
+    "legal_email": null,
+    "address": null,
     "contact_persons": [
-      {{"name": "联系人姓名", "title": "职务", "phone": "电话", "source": "信息来源"}}
+        {{"name": null, "title": null, "phone": null, "source": null}}
     ],
-    "_source_url": "本段信息的来源网页地址"
+    "_source_url": null
   }}
-}}
+}}"""
 
-只返回 JSON，不要其他文字。"""
+# Backward-compatible import alias; collection uses B1/B2 above.
+_PROMPT_ROUND4_CONTACT = _PROMPT_ROUND4_CONTACT_B2
 
 _ENRICH_PROMPT = """请搜索企业「{company_name}」的以下补充信息，并提取结构化数据。
 请优先搜索执行时最近一年的数据。
@@ -407,20 +476,13 @@ class QwenCollector(BaseCollector):
             return raw
 
         now = datetime.now()
-        rounds = [
-            ("1a-基础工商", _PROMPT_ROUND1A),
-            ("1b-财务治理", _PROMPT_ROUND1B),
-            ("2-招聘营销", _PROMPT_ROUND2),
-            ("3-诉讼技术", _PROMPT_ROUND3),
-            ("4-联系方式", _PROMPT_ROUND4_CONTACT),
-        ]
 
         started_at = time.perf_counter()
-        max_workers = min(MAX_PARALLEL_ROUNDS, len(rounds))
+        max_workers = min(MAX_PARALLEL_ROUNDS, 5)
         logger.info(
             "Qwen collection started: company=%s rounds=%d max_workers=%d",
             company_id,
-            len(rounds),
+            5,
             max_workers,
         )
 
@@ -428,18 +490,33 @@ class QwenCollector(BaseCollector):
             max_workers=max_workers,
             thread_name_prefix="company-profile-qwen",
         ) as executor:
-            futures = [
-                executor.submit(
-                    self._collect_round,
-                    label,
-                    prompt_tpl.format(company_name=company_id),
-                    company_id,
-                )
-                for label, prompt_tpl in rounds
+            futures: list[tuple[str, Any]] = [
+                ("1a-基础工商", executor.submit(
+                    self._collect_business_round_1a, company_id,
+                )),
             ]
+            other_rounds = [
+                ("1b-财务治理", _PROMPT_ROUND1B),
+                ("2-招聘营销", _PROMPT_ROUND2),
+                ("3-诉讼技术", _PROMPT_ROUND3),
+            ]
+            for label, prompt_tpl in other_rounds:
+                futures.append((
+                    label,
+                    executor.submit(
+                        self._collect_round,
+                        label,
+                        prompt_tpl.format(company_name=company_id),
+                        company_id,
+                    ),
+                ))
+            futures.append((
+                "4-联系方式",
+                executor.submit(self._collect_contact_round_4, company_id),
+            ))
 
             round_results: list[_RoundResult] = []
-            for (label, _), future in zip(rounds, futures):
+            for label, future in futures:
                 try:
                     round_results.append(future.result())
                 except Exception as exc:
@@ -475,13 +552,13 @@ class QwenCollector(BaseCollector):
                         )
             self._merge_extracted(raw, result)
 
-        failed_rounds = len(rounds) - successful_rounds
+        failed_rounds = 5 - successful_rounds
         elapsed_seconds = time.perf_counter() - started_at
         if successful_rounds == 0:
             logger.warning(
                 "Qwen collection completed: company=%s all %d rounds failed elapsed_seconds=%.2f",
                 company_id,
-                len(rounds),
+                5,
                 elapsed_seconds,
             )
         else:
@@ -503,7 +580,7 @@ class QwenCollector(BaseCollector):
         # 记录 web_search 状态
         status = (
             "full_collection"
-            if successful_rounds == len(rounds)
+            if successful_rounds == 5
             else "partial_collection"
             if successful_rounds > 0
             else "collection_failed"
@@ -570,6 +647,112 @@ class QwenCollector(BaseCollector):
             attempts=call_result.attempts,
             elapsed_seconds=elapsed_seconds,
             error=call_result.error,
+        )
+
+    def _collect_business_round_1a(self, company_id: str) -> _RoundResult:
+        """Execute 1a as text evidence search followed by JSON normalization."""
+        return self._collect_text_then_json_round(
+            label="1a-基础工商",
+            text_prompt=_PROMPT_ROUND1A_A1,
+            json_prompt=_PROMPT_ROUND1A_A2,
+            json_context_key="a1_result",
+            required_section="business_info",
+            text_round_label="1a-A1",
+            json_round_label="1a-A2",
+            company_id=company_id,
+        )
+
+    def _collect_contact_round_4(self, company_id: str) -> _RoundResult:
+        """Execute round 4 as contact evidence search followed by JSON normalization."""
+        return self._collect_text_then_json_round(
+            label="4-联系方式",
+            text_prompt=_PROMPT_ROUND4_CONTACT_B1,
+            json_prompt=_PROMPT_ROUND4_CONTACT_B2,
+            json_context_key="b1_result",
+            required_section="contact_info",
+            text_round_label="4-B1",
+            json_round_label="4-B2",
+            company_id=company_id,
+        )
+
+    def _collect_text_then_json_round(
+        self,
+        *,
+        label: str,
+        text_prompt: str,
+        json_prompt: str,
+        json_context_key: str,
+        required_section: str,
+        text_round_label: str,
+        json_round_label: str,
+        company_id: str,
+    ) -> _RoundResult:
+        """Execute a two-step round: text evidence search, then JSON normalization."""
+        started_at = time.perf_counter()
+
+        text_call = self._call_qwen_text(
+            text_prompt.format(company_name=company_id),
+            company_id=company_id,
+            round_label=text_round_label,
+        )
+        if not text_call.content or not text_call.content.strip():
+            elapsed_seconds = time.perf_counter() - started_at
+            logger.warning(
+                "Qwen round failed: company=%s round=%s attempts=%d elapsed_seconds=%.2f error=%s",
+                company_id,
+                label,
+                text_call.attempts,
+                elapsed_seconds,
+                text_call.error or f"{text_round_label} failed: empty response",
+            )
+            return _RoundResult(
+                label=label,
+                payload=None,
+                attempts=text_call.attempts,
+                elapsed_seconds=elapsed_seconds,
+                error=text_call.error or f"{text_round_label} failed: empty response",
+            )
+
+        text_result = text_call.content.strip()
+
+        json_call = self._call_qwen(
+            json_prompt.format(company_name=company_id, **{json_context_key: text_result}),
+            company_id=company_id,
+            round_label=json_round_label,
+        )
+        total_attempts = text_call.attempts + json_call.attempts
+        elapsed_seconds = time.perf_counter() - started_at
+
+        if not json_call.payload or not isinstance(json_call.payload.get(required_section), dict):
+            logger.warning(
+                "Qwen round failed: company=%s round=%s attempts=%d elapsed_seconds=%.2f error=%s",
+                company_id,
+                label,
+                total_attempts,
+                elapsed_seconds,
+                json_call.error or f"{json_round_label} missing {required_section}",
+            )
+            return _RoundResult(
+                label=label,
+                payload=None,
+                attempts=total_attempts,
+                elapsed_seconds=elapsed_seconds,
+                error=json_call.error or f"{json_round_label} missing {required_section}",
+            )
+
+        logger.debug(
+            "Qwen round completed: company=%s round=%s attempts=%d elapsed_seconds=%.2f",
+            company_id,
+            label,
+            total_attempts,
+            elapsed_seconds,
+        )
+        return _RoundResult(
+            label=label,
+            payload=json_call.payload,
+            attempts=total_attempts,
+            elapsed_seconds=elapsed_seconds,
+            error=None,
         )
 
     @staticmethod
@@ -739,6 +922,44 @@ class QwenCollector(BaseCollector):
             error=last_error,
         )
 
+    def _call_qwen_text(
+        self,
+        prompt: str,
+        company_id: str = "-",
+        round_label: str = "-",
+    ) -> _QwenTextResult:
+        """Call Qwen and return raw text content instead of parsed JSON."""
+        last_error: str | None = None
+        for attempt in range(1, MAX_QWEN_ATTEMPTS + 1):
+            try:
+                result = self._call_qwen_text_once(prompt)
+                if result and result.strip():
+                    return _QwenTextResult(
+                        content=result.strip(),
+                        attempts=attempt,
+                        error=None,
+                    )
+                last_error = "empty response"
+            except Exception as exc:
+                last_error = f"{type(exc).__name__}: {exc}"
+
+            if attempt < MAX_QWEN_ATTEMPTS:
+                logger.debug(
+                    "Qwen retry scheduled: company=%s round=%s attempt=%d/%d error=%s",
+                    company_id,
+                    round_label,
+                    attempt,
+                    MAX_QWEN_ATTEMPTS,
+                    last_error,
+                )
+                time.sleep(RETRY_DELAY_SECONDS * attempt)
+
+        return _QwenTextResult(
+            content=None,
+            attempts=MAX_QWEN_ATTEMPTS,
+            error=last_error,
+        )
+
     def _get_openai_client(self):
         """获取当前线程专用的 OpenAI 客户端；未启用 SDK 时返回 None。"""
         if self._openai_client_factory is None:
@@ -770,6 +991,13 @@ class QwenCollector(BaseCollector):
             return self._call_via_openai(prompt)
         return self._call_via_requests(prompt)
 
+    def _call_qwen_text_once(self, prompt: str) -> str | None:
+        """为提示词补充当前日期，并返回 Qwen 的原始文本响应。"""
+        prompt = f"当前日期：{date.today().isoformat()}。\n{prompt}"
+        if self._openai_client_factory is not None:
+            return self._call_via_openai_content(prompt)
+        return self._call_via_requests_content(prompt)
+
     def _call_via_openai(self, prompt: str) -> dict[str, Any] | None:
         """
         使用当前线程专用的 OpenAI 客户端调用 Qwen
@@ -786,13 +1014,20 @@ class QwenCollector(BaseCollector):
         异常：
             - 网络错误、超时和服务端错误向上抛出，由应用层统一重试
         """
+        content = self._call_via_openai_content(prompt)
+        if not content:
+            return None
+        return self._extract_json(content)
+
+    def _call_via_openai_content(self, prompt: str) -> str | None:
+        """Return raw text content from the OpenAI-compatible Qwen client."""
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
         ]
         client = self._get_openai_client()
         if client is None:
-            return self._call_via_requests(prompt)
+            return self._call_via_requests_content(prompt)
 
         response = client.chat.completions.create(
             model=self._model,
@@ -806,10 +1041,7 @@ class QwenCollector(BaseCollector):
             },
         )
         choice = response.choices[0]
-        content = (choice.message.content or "").strip()
-        if not content:
-            return None
-        return self._extract_json(content)
+        return (choice.message.content or "").strip()
 
     def _call_via_requests(self, prompt: str) -> dict[str, Any] | None:
         """
@@ -828,6 +1060,13 @@ class QwenCollector(BaseCollector):
             - 网络错误、超时、非成功 HTTP 状态和响应解析错误向上抛出，
               由应用层统一重试
         """
+        content = self._call_via_requests_content(prompt)
+        if not content:
+            return None
+        return self._extract_json(content)
+
+    def _call_via_requests_content(self, prompt: str) -> str | None:
+        """Return raw text content from the requests-based Qwen transport."""
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
@@ -855,11 +1094,7 @@ class QwenCollector(BaseCollector):
 
         choice = data.get("choices", [{}])[0]
         message = choice.get("message", {})
-        content = (message.get("content") or "").strip()
-
-        if not content:
-            return None
-        return self._extract_json(content)
+        return (message.get("content") or "").strip()
 
     @staticmethod
     def _extract_json(content: str) -> dict[str, Any] | None:
