@@ -1,9 +1,19 @@
-ARG BASE_IMAGE_REGISTRY=
-ARG BASE_IMAGE=${BASE_IMAGE_REGISTRY}python:3.11-slim-bookworm
-FROM ${BASE_IMAGE}
+ARG BASE_IMAGE_REGISTRY
+FROM ${BASE_IMAGE_REGISTRY}python:3.11-slim-bookworm
 
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        fonts-noto-cjk \
+        libharfbuzz-subset0 \
+        libjpeg62-turbo \
+        libopenjp2-7 \
+        libpango-1.0-0 \
+        libpangoft2-1.0-0 \
+        shared-mime-info \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/*
 
 # ── 依赖安装 ──
 # service 核心依赖（Redis + PostgreSQL）及业务依赖
@@ -24,6 +34,8 @@ RUN python -m pip install --no-cache-dir \
 COPY service/main.py .
 COPY service/app/ app/
 COPY service/handlers/ handlers/
+COPY service/file_server/ file_server/
+COPY service/file_cleanup/ file_cleanup/
 
 # ── 业务代码 ──
 COPY __init__.py company_profile/

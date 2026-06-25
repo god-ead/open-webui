@@ -1,36 +1,95 @@
-include:
-  - path: ./docker-compose.infra.yaml
+x-worker-env: &worker-env
+  REDIS_URL: redis://redis:6379/0
+  DATABASE_URL: postgresql://postgres:postgres@postgres:5432/appdb
+  TASK_QUEUE: task_queue
+  RESULT_QUEUE: result_queue
+  HANDLER_MODULES: ${HANDLER_MODULES:-handlers.company_profile:CompanyProfileHandler}
+  LLM_API_KEY: ${LLM_API_KEY:-}
+  LLM_BASE_URL: ${LLM_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+  LLM_MODEL: ${LLM_MODEL:-qwen3.5-plus}
+  LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-180}
+  PROFILE_PDF_TEMP_DIR: ${PROFILE_PDF_TEMP_DIR:-/app/profile-pdf-temp}
+  PROFILE_PDF_BACKUP_DIR: ${PROFILE_PDF_BACKUP_DIR:-/app/profile-pdf-backup}
+  PROFILE_PDF_DOWNLOAD_BASE_URL: ${PROFILE_PDF_DOWNLOAD_BASE_URL:-http://127.0.0.1:8088/api/download}
+  SERVICE_NAME: ${SERVICE_NAME:-company-profile}
+  TZ: Asia/Shanghai
 
-x-service-build: &service-build
-  context: .
-  dockerfile: ./service/Dockerfile
-  args:
-    BASE_IMAGE_REGISTRY: ${BASE_IMAGE_REGISTRY:-}
+networks:
+  app_net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  profile_pdf_temp:
+    name: ${PROFILE_PDF_TEMP_VOLUME:-profile_pdf_temp}
+  profile_pdf_backup:
+    name: ${PROFILE_PDF_BACKUP_VOLUME:-profile_pdf_backup}
 
 services:
+  postgres:
+    extends:
+      file: docker-compose.infra.yaml
+      service: postgres
+
+  redis:
+    extends:
+      file: docker-compose.infra.yaml
+      service: redis
+
+  api-gateway-1:
+    extends:
+      file: docker-compose.infra.yaml
+      service: api-gateway-1
+
+  api-gateway-2:
+    extends:
+      file: docker-compose.infra.yaml
+      service: api-gateway-2
+
+  api-gateway-3:
+    extends:
+      file: docker-compose.infra.yaml
+      service: api-gateway-3
+
+  nginx:
+    extends:
+      file: docker-compose.infra.yaml
+      service: nginx
+    volumes:
+      - ./service/nginx/api_upstream.conf:/etc/nginx/conf.d/api_upstream.conf:ro
+    depends_on:
+      - api-gateway-1
+      - api-gateway-2
+      - api-gateway-3
+      - file-server
+
+  scheduler:
+    extends:
+      file: docker-compose.infra.yaml
+      service: scheduler
+
+  monitor:
+    extends:
+      file: docker-compose.infra.yaml
+      service: monitor
+
+  backup:
+    extends:
+      file: docker-compose.infra.yaml
+      service: backup
+
   service-1:
-    image: ${SERVICE_IMAGE:-company-profile-service:v0.1.0}
-    build:
-      context: .
-      dockerfile: ./service/Dockerfile
-      args:
-        BASE_IMAGE_REGISTRY: ${BASE_IMAGE_REGISTRY:-}
+    image: ${COMPANY_PROFILE_REGISTRY:-}${SERVICE_IMAGE:-company-profile-service:v0.1.0}
     container_name: ${SERVICE_NAME:-company-profile}-service-1
     restart: always
     stop_grace_period: 60s
     environment:
-      REDIS_URL: redis://redis:6379/0
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/appdb
-      TASK_QUEUE: task_queue
-      RESULT_QUEUE: result_queue
-      HANDLER_MODULES: ${HANDLER_MODULES:-handlers.company_profile:CompanyProfileHandler}
-      LLM_API_KEY: ${LLM_API_KEY:-}
-      LLM_BASE_URL: ${LLM_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
-      LLM_MODEL: ${LLM_MODEL:-qwen3.5-plus}
-      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-180}
-      SERVICE_NAME: ${SERVICE_NAME:-company-profile}
-      TZ: Asia/Shanghai
+      <<: *worker-env
       SERVICE_ID: service-1
+    volumes:
+      - profile_pdf_temp:${PROFILE_PDF_TEMP_DIR:-/app/profile-pdf-temp}
+      - profile_pdf_backup:${PROFILE_PDF_BACKUP_DIR:-/app/profile-pdf-backup}
     networks:
       - app_net
     depends_on:
@@ -40,23 +99,16 @@ services:
         condition: service_healthy
 
   service-2:
-    image: ${SERVICE_IMAGE:-company-profile-service:v0.1.0}
+    image: ${COMPANY_PROFILE_REGISTRY:-}${SERVICE_IMAGE:-company-profile-service:v0.1.0}
     container_name: ${SERVICE_NAME:-company-profile}-service-2
     restart: always
     stop_grace_period: 60s
     environment:
-      REDIS_URL: redis://redis:6379/0
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/appdb
-      TASK_QUEUE: task_queue
-      RESULT_QUEUE: result_queue
-      HANDLER_MODULES: ${HANDLER_MODULES:-handlers.company_profile:CompanyProfileHandler}
-      LLM_API_KEY: ${LLM_API_KEY:-}
-      LLM_BASE_URL: ${LLM_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
-      LLM_MODEL: ${LLM_MODEL:-qwen3.5-plus}
-      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-180}
-      SERVICE_NAME: ${SERVICE_NAME:-company-profile}
-      TZ: Asia/Shanghai
+      <<: *worker-env
       SERVICE_ID: service-2
+    volumes:
+      - profile_pdf_temp:${PROFILE_PDF_TEMP_DIR:-/app/profile-pdf-temp}
+      - profile_pdf_backup:${PROFILE_PDF_BACKUP_DIR:-/app/profile-pdf-backup}
     networks:
       - app_net
     depends_on:
@@ -66,3 +118,41 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+
+  file-server:
+    image: ${COMPANY_PROFILE_REGISTRY:-}${SERVICE_IMAGE:-company-profile-service:v0.1.0}
+    container_name: ${SERVICE_NAME:-company-profile}-file-server
+    restart: always
+    command: uvicorn file_server.main:app --host 0.0.0.0 --port 8010
+    environment:
+      PROFILE_PDF_TEMP_DIR: ${PROFILE_PDF_TEMP_DIR:-/app/profile-pdf-temp}
+      PROFILE_PDF_TEMP_TTL_HOURS: ${PROFILE_PDF_TEMP_TTL_HOURS:-24}
+      TZ: Asia/Shanghai
+    volumes:
+      - profile_pdf_temp:${PROFILE_PDF_TEMP_DIR:-/app/profile-pdf-temp}:ro
+    networks:
+      - app_net
+    depends_on:
+      service-1:
+        condition: service_started
+
+  file-cleanup:
+    image: ${COMPANY_PROFILE_REGISTRY:-}${SERVICE_IMAGE:-company-profile-service:v0.1.0}
+    container_name: ${SERVICE_NAME:-company-profile}-file-cleanup
+    restart: always
+    command: python -m file_cleanup.main
+    environment:
+      PROFILE_PDF_TEMP_DIR: ${PROFILE_PDF_TEMP_DIR:-/app/profile-pdf-temp}
+      PROFILE_PDF_BACKUP_DIR: ${PROFILE_PDF_BACKUP_DIR:-/app/profile-pdf-backup}
+      PROFILE_PDF_TEMP_TTL_HOURS: ${PROFILE_PDF_TEMP_TTL_HOURS:-24}
+      PROFILE_PDF_BACKUP_TTL_DAYS: ${PROFILE_PDF_BACKUP_TTL_DAYS:-7}
+      PROFILE_PDF_CLEANUP_INTERVAL_SECONDS: ${PROFILE_PDF_CLEANUP_INTERVAL_SECONDS:-3600}
+      TZ: Asia/Shanghai
+    volumes:
+      - profile_pdf_temp:${PROFILE_PDF_TEMP_DIR:-/app/profile-pdf-temp}
+      - profile_pdf_backup:${PROFILE_PDF_BACKUP_DIR:-/app/profile-pdf-backup}
+    networks:
+      - app_net
+    depends_on:
+      service-1:
+        condition: service_started

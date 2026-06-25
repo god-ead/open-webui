@@ -86,6 +86,18 @@ def _timeout_handler(signum, frame):
     raise TaskTimeoutError("任务处理超过 20 分钟")
 
 
+def build_failure_output(error_msg: str, version: str = "") -> dict:
+    return {
+        "code": 3,
+        "message": f"企业画像生成失败: {error_msg}",
+        "timestamp": int(time.time() * 1000),
+        "data": {
+            "profile": "",
+            "version": version,
+        },
+    }
+
+
 # ── 任务处理 ──────────────────────────────────────────────
 def process_job(task_data: dict, handler_registry: HandlerRegistry):
     """
@@ -140,7 +152,14 @@ def process_job(task_data: dict, handler_registry: HandlerRegistry):
         print(f"[{SERVICE_ID}] 任务 {task_id} 完成，耗时 {elapsed:.2f}s")
 
     except TaskTimeoutError:
-        db.mark_failed(task_id, "任务处理超时（超过20分钟）")
+        error_msg = "任务处理超时（超过20分钟）"
+        elapsed = round(time.time() - start_time, 3)
+        db.mark_failed(
+            task_id,
+            error_msg,
+            output=build_failure_output(error_msg),
+            processing_time=elapsed,
+        )
         redis_client.rpush(
             RESULT_QUEUE,
             json.dumps({
@@ -153,7 +172,14 @@ def process_job(task_data: dict, handler_registry: HandlerRegistry):
         print(f"[{SERVICE_ID}] 任务 {task_id} 超时失败")
 
     except Exception as e:
-        db.mark_failed(task_id, str(e))
+        error_msg = str(e)
+        elapsed = round(time.time() - start_time, 3)
+        db.mark_failed(
+            task_id,
+            error_msg,
+            output=build_failure_output(error_msg),
+            processing_time=elapsed,
+        )
         redis_client.rpush(
             RESULT_QUEUE,
             json.dumps({

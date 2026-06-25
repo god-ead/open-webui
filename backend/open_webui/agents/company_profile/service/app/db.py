@@ -43,13 +43,30 @@ class Database:
             )
             self.conn.commit()
 
-    def mark_failed(self, task_id: str, error_msg: str):
-        """标记任务失败，记录错误信息"""
+    def mark_failed(
+        self,
+        task_id: str,
+        error_msg: str,
+        output: dict | None = None,
+        processing_time: float | None = None,
+    ):
+        """标记任务失败，记录错误信息和可选业务输出"""
         with self.conn.cursor() as cur:
-            cur.execute(
-                "UPDATE tasks SET status='failed', error_msg=%s, completed_at=NOW() WHERE id=%s",
-                (error_msg, task_id),
-            )
+            if output is None and processing_time is None:
+                cur.execute(
+                    "UPDATE tasks SET status='failed', error_msg=%s, completed_at=NOW() WHERE id=%s",
+                    (error_msg, task_id),
+                )
+            else:
+                cur.execute(
+                    "UPDATE tasks SET status='failed', output=%s, error_msg=%s, processing_time=%s, completed_at=NOW() WHERE id=%s",
+                    (
+                        json.dumps(output or {}, ensure_ascii=False),
+                        error_msg,
+                        processing_time,
+                        task_id,
+                    ),
+                )
             self.conn.commit()
 
 
