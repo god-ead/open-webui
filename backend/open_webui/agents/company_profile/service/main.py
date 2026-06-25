@@ -3,6 +3,7 @@
 import os
 import json
 import time
+import logging
 import signal
 import threading
 
@@ -10,6 +11,8 @@ import redis
 
 from app.db import db
 from handlers import HandlerRegistry, build_handler_registry
+
+logger = logging.getLogger("company_profile.worker")
 
 # ── 环境变量 ──────────────────────────────────────────────
 SERVICE_ID = os.getenv("SERVICE_ID", "service")
@@ -24,7 +27,7 @@ running = True
 
 def handle_signal(signum, frame):
     global running
-    print(f"\n[{SERVICE_ID}] 收到信号 {signum}，准备关闭...")
+    logger.info("收到信号 %s，准备关闭...", signum)
     running = False
 
 
@@ -46,7 +49,7 @@ def heartbeat():
         redis_client.expire(f"service:{SERVICE_ID}", 300)
         redis_client.sadd("active_workers", SERVICE_ID)
     except Exception as e:
-        print(f"[{SERVICE_ID}] 心跳失败: {e}")
+        logger.warning("心跳失败: %s", e)
 
 
 def heartbeat_loop():
@@ -68,7 +71,7 @@ def register_service():
         },
     )
     redis_client.sadd("active_workers", SERVICE_ID)
-    print(f"[{SERVICE_ID}] 服务已注册")
+    logger.info("服务已注册")
 
 
 def unregister_service():
@@ -120,12 +123,12 @@ def process_job(task_data: dict, handler_registry: HandlerRegistry):
             cur.execute("SELECT status FROM tasks WHERE id = %s", (task_id,))
             row = cur.fetchone()
             if row and row[0] in ("cancelled", "completed", "failed"):
-                print(f"[{SERVICE_ID}] 任务 {task_id} 状态为 {row[0]}，跳过")
+                logger.info("任务 %s 状态为 %s，跳过", task_id, row[0])
                 return
 
         # 标记处理中
         db.mark_processing(task_id, SERVICE_ID)
-        print(f"[{SERVICE_ID}] 开始处理任务 {task_id}")
+        logger.info("开始处理任务 %s", task_id)
 
         # ── 执行业务逻辑（Handler 调度） ──
         result = handler_registry.dispatch(
@@ -149,7 +152,7 @@ def process_job(task_data: dict, handler_registry: HandlerRegistry):
             }),
         )
 
-        print(f"[{SERVICE_ID}] 任务 {task_id} 完成，耗时 {elapsed:.2f}s")
+        logger.info("任务 %s 完成，耗时 %.2fs", task_id, elapsed)
 
     except TaskTimeoutError:
         error_msg = "任务处理超时（超过20分钟）"
@@ -169,7 +172,7 @@ def process_job(task_data: dict, handler_registry: HandlerRegistry):
                 "callback": task_data.get("callback"),
             }),
         )
-        print(f"[{SERVICE_ID}] 任务 {task_id} 超时失败")
+        logger.error("任务 %s 超时失败", task_id)
 
     except Exception as e:
         error_msg = str(e)
@@ -189,7 +192,7 @@ def process_job(task_data: dict, handler_registry: HandlerRegistry):
                 "callback": task_data.get("callback"),
             }),
         )
-        print(f"[{SERVICE_ID}] 任务 {task_id} 失败: {e}")
+        logger.error("任务 %s 失败: %s", task_id, e)
 
     finally:
         signal.alarm(0)
@@ -206,12 +209,12 @@ def main():
     # 注册服务 + 连接数据库
     register_service()
     db.connect()
-    print(f"[{SERVICE_ID}] 开始消费队列: {TASK_QUEUE}")
+    logger.info("开始消费队列: %s", TASK_QUEUE)
 
     # 启动独立心跳线程（不受任务阻塞影响）
     hb_thread = threading.Thread(target=heartbeat_loop, daemon=True)
     hb_thread.start()
-    print(f"[{SERVICE_ID}] 心跳线程已启动")
+    logger.info("心跳线程已启动")
 
     # 主消费循环
     while running:
@@ -223,18 +226,22 @@ def main():
                 process_job(task_data, handler_registry)
 
         except redis.ConnectionError:
-            print(f"[{SERVICE_ID}] Redis 断开，5秒后重连...")
+            logger.warning("Redis 断开，5秒后重连...")
             time.sleep(5)
         except Exception as e:
-            print(f"[{SERVICE_ID}] 错误: {e}")
+            logger.error("错误: %s", e)
             time.sleep(1)
 
     # 优雅退出
     unregister_service()
     db.close()
     redis_client.close()
-    print(f"[{SERVICE_ID}] 服务已退出")
+    logger.info("服务已退出")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
+    )
     main()

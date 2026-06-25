@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
+
+logger = logging.getLogger("company_profile.file_cleanup")
 
 
 @dataclass(frozen=True)
@@ -83,5 +86,5 @@ def _cleanup_dir(root: Path, ttl_seconds: int, now: float) -> list[str]:
             path.unlink()
             removed.append(str(path))
         except OSError as exc:
-            print(f"[file-cleanup] 删除失败 {path}: {exc}")
+            logger.warning("删除失败 %s: %s", path, exc)
     return removed
