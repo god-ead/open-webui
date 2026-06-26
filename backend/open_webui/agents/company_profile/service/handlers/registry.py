@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import importlib
+import logging
 import os
 from typing import Any, Protocol
+
+logger = logging.getLogger("company_profile.handler_registry")
 
 
 class TaskHandler(Protocol):
@@ -42,13 +45,7 @@ class HandlerRegistry:
         self._handlers[handler.task_type] = handler
 
     def add_handler_by_path(self, handler_path: str) -> None:
-        """
-        按路径加载并注册 Handler。
-
-        Args:
-            handler_path: 格式 ``"module.Class"`` 或 ``"package.module:ClassName"``
-                          注意：路径分隔符是 ``.``，类名分隔符是 ``:``
-        """
+        """按路径加载并注册 Handler，格式 ``module.path:ClassName``"""
         module_path, class_name = handler_path.split(":", 1)
         module = importlib.import_module(module_path)
         handler_cls = getattr(module, class_name)
@@ -58,12 +55,7 @@ class HandlerRegistry:
     def dispatch(
         self, task_type: str, payload: dict[str, Any]
     ) -> dict[str, Any]:
-        """
-        根据 task_type 分发到对应 Handler 执行。
-
-        Raises:
-            ValueError: 如果 task_type 没有注册对应的 Handler
-        """
+        """根据 task_type 分发到对应 Handler 执行"""
         handler = self._handlers.get(task_type)
         if handler is None:
             raise ValueError(
@@ -74,15 +66,7 @@ class HandlerRegistry:
 
 
 def build_handler_registry() -> HandlerRegistry:
-    """
-    从环境变量 HANDLER_MODULES 构建 Handler 注册表。
-
-    HANDLER_MODULES 格式::
-
-        handlers.example:ExampleHandler,handlers.another:AnotherHandler
-
-    每个条目格式为 ``module_path:ClassName``。
-    """
+    """从环境变量 HANDLER_MODULES 构建 Handler 注册表"""
     registry = HandlerRegistry()
     modules = os.getenv("HANDLER_MODULES", "")
     handler_paths = [
@@ -90,13 +74,13 @@ def build_handler_registry() -> HandlerRegistry:
     ]
 
     if not handler_paths:
-        print(
-            "[handler_registry] HANDLER_MODULES 未配置，未注册任何 handler — "
+        logger.warning(
+            "HANDLER_MODULES 未配置，未注册任何 handler — "
             "Worker 可以启动但无法处理任何任务"
         )
         return registry
 
     for handler_path in handler_paths:
         registry.add_handler_by_path(handler_path)
-        print(f"[handler_registry] 已注册: {handler_path}")
+        logger.info("已注册: %s", handler_path)
     return registry

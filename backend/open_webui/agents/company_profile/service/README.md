@@ -203,3 +203,21 @@ docker build -f service/Dockerfile -t company-profile-service:v0.1.0 .
 ## 扩容
 
 Worker 是**无状态**的（配置来自环境变量，任务来自 Redis），需要扩容时直接增加 `docker-compose.yaml` 中 `service-X` 副本数（当前 2 个），修改容器名和 `SERVICE_ID` 即可。
+
+## 日志
+
+所有业务服务（`main.py`、`file_cleanup`、`export_tasks`）通过 `service/common/logging_config.py` 统一配置日志（从 `deploy-base/common/` 拷贝，Dockerfile 通过 `COPY service/common/ common/` 纳入镜像）：
+
+- 写入同一文件 `.log/service.log`，通过 `[company_profile.worker]`、`[company_profile.file_cleanup]` 区分来源
+- 单文件上限 **5 MB**，自动轮转，最多保留 **10** 个归档
+- 同时输出到控制台
+- 入口调用：`from common.logging_config import setup_logging; setup_logging()`
+
+`file-server` 由 uvicorn 管理日志，输出到 stdout。
+
+各容器独立文件系统，日志不跨容器共享。持久化日志到宿主机可在 `docker-compose.yaml` 中挂载卷：
+
+```yaml
+volumes:
+  - ./logs:/app/.log
+```

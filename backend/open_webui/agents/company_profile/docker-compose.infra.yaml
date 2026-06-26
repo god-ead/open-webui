@@ -13,7 +13,7 @@ volumes:
 services:
   postgres:
     image: ${DEPLOY_BASE_REGISTRY:-}${POSTGRES_IMAGE:-postgres:v0.1.0}
-    container_name: ${SERVICE_NAME:-company-profile}-postgres
+    container_name: ${SERVICE_NAME:-default_service}-postgres
     restart: always
     command: postgres -c timezone=Asia/Shanghai
     volumes:
@@ -33,7 +33,7 @@ services:
 
   redis:
     image: ${DEPLOY_BASE_REGISTRY:-}${REDIS_IMAGE:-redis:v0.1.0}
-    container_name: ${SERVICE_NAME:-company-profile}-redis
+    container_name: ${SERVICE_NAME:-default_service}-redis
     restart: always
     volumes:
       - redis_data:/data
@@ -49,7 +49,7 @@ services:
 
   api-gateway-1:
     image: ${DEPLOY_BASE_REGISTRY:-}${API_GATEWAY_IMAGE:-api-gateway:v0.1.0}
-    container_name: ${SERVICE_NAME:-company-profile}-api-1
+    container_name: ${SERVICE_NAME:-default_service}-api-1
     restart: always
     environment:
       REDIS_URL: redis://redis:6379/0
@@ -71,7 +71,7 @@ services:
 
   api-gateway-2:
     image: ${DEPLOY_BASE_REGISTRY:-}${API_GATEWAY_IMAGE:-api-gateway:v0.1.0}
-    container_name: ${SERVICE_NAME:-company-profile}-api-2
+    container_name: ${SERVICE_NAME:-default_service}-api-2
     restart: always
     environment:
       REDIS_URL: redis://redis:6379/0
@@ -95,7 +95,7 @@ services:
 
   api-gateway-3:
     image: ${DEPLOY_BASE_REGISTRY:-}${API_GATEWAY_IMAGE:-api-gateway:v0.1.0}
-    container_name: ${SERVICE_NAME:-company-profile}-api-3
+    container_name: ${SERVICE_NAME:-default_service}-api-3
     restart: always
     environment:
       REDIS_URL: redis://redis:6379/0
@@ -119,7 +119,7 @@ services:
 
   nginx:
     image: ${DEPLOY_BASE_REGISTRY:-}${NGINX_IMAGE:-nginx:v0.1.0}
-    container_name: ${SERVICE_NAME:-company-profile}-nginx
+    container_name: ${SERVICE_NAME:-default_service}-nginx
     restart: always
     ports:
       - ${NGINX_HOST_PORT:-8088}:80
@@ -134,7 +134,7 @@ services:
 
   scheduler:
     image: ${DEPLOY_BASE_REGISTRY:-}${SCHEDULER_IMAGE:-scheduler:v0.1.0}
-    container_name: ${SERVICE_NAME:-company-profile}-scheduler
+    container_name: ${SERVICE_NAME:-default_service}-scheduler
     restart: always
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -147,7 +147,7 @@ services:
       CHECK_INTERVAL: "10"
       HEARTBEAT_TIMEOUT: "300"
       TASK_TIMEOUT_MINUTES: "20"
-      SERVICE_NAME: ${SERVICE_NAME:-company-profile}
+      SERVICE_NAME: ${SERVICE_NAME:-default_service}
     networks:
       - app_net
     depends_on:
@@ -158,14 +158,14 @@ services:
 
   monitor:
     image: ${DEPLOY_BASE_REGISTRY:-}${MONITOR_IMAGE:-monitor:v0.1.0}
-    container_name: ${SERVICE_NAME:-company-profile}-monitor
+    container_name: ${SERVICE_NAME:-default_service}-monitor
     restart: always
     environment:
       REDIS_URL: redis://redis:6379/0
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/appdb
       TASK_QUEUE: task_queue
       RESULT_QUEUE: result_queue
-      SERVICE_NAME: ${SERVICE_NAME:-company-profile}
+      SERVICE_NAME: ${SERVICE_NAME:-default_service}
       TZ: Asia/Shanghai
     networks:
       - app_net
@@ -177,10 +177,10 @@ services:
 
   backup:
     image: ${DEPLOY_BASE_REGISTRY:-}${BACKUP_IMAGE:-db-backup:v0.1.0}
-    container_name: ${SERVICE_NAME:-company-profile}-backup
+    container_name: ${SERVICE_NAME:-default_service}-backup
     restart: always
     volumes:
-      - ./backups:/app/backups
+      - ${BACKUP_DIR:-backups}:/app/backups
     environment:
       DB_NAME: appdb
       DB_USER: postgres

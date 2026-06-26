@@ -36,6 +36,7 @@ COPY service/app/ app/
 COPY service/handlers/ handlers/
 COPY service/file_server/ file_server/
 COPY service/file_cleanup/ file_cleanup/
+COPY service/common/ common/
 
 # ── 业务代码 ──
 COPY __init__.py company_profile/
