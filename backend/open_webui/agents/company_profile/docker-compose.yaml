@@ -8,8 +8,8 @@ x-worker-env: &worker-env
   LLM_BASE_URL: ${LLM_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
   LLM_MODEL: ${LLM_MODEL:-qwen3.5-plus}
   LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-180}
-  PROFILE_PDF_TEMP_DIR: ${PROFILE_PDF_TEMP_DIR:-/app/profile-pdf-temp}
-  PROFILE_PDF_BACKUP_DIR: ${PROFILE_PDF_BACKUP_DIR:-/app/profile-pdf-backup}
+  PROFILE_PDF_TEMP_DIR: ${PROFILE_PDF_TEMP_DIR:-./data/pdf_temp}
+  PROFILE_PDF_BACKUP_DIR: ${PROFILE_PDF_BACKUP_DIR:-./data/pdf_backup}
   PROFILE_PDF_DOWNLOAD_BASE_URL: ${PROFILE_PDF_DOWNLOAD_BASE_URL:-http://127.0.0.1:8088/api/download}
   SERVICE_NAME: ${SERVICE_NAME:-company-profile}
   TZ: Asia/Shanghai
@@ -21,10 +21,6 @@ networks:
 volumes:
   postgres_data:
   redis_data:
-  profile_pdf_temp:
-    name: ${PROFILE_PDF_TEMP_VOLUME:-profile_pdf_temp}
-  profile_pdf_backup:
-    name: ${PROFILE_PDF_BACKUP_VOLUME:-profile_pdf_backup}
 
 services:
   postgres:
@@ -88,8 +84,8 @@ services:
       <<: *worker-env
       SERVICE_ID: service-1
     volumes:
-      - profile_pdf_temp:${PROFILE_PDF_TEMP_DIR:-/app/profile-pdf-temp}
-      - profile_pdf_backup:${PROFILE_PDF_BACKUP_DIR:-/app/profile-pdf-backup}
+      - ${PROFILE_PDF_TEMP_DIR}:/app/data/pdf-temp
+      - ${PROFILE_PDF_BACKUP_DIR}:/app/data/pdf-backup
     networks:
       - app_net
     depends_on:
@@ -107,8 +103,8 @@ services:
       <<: *worker-env
       SERVICE_ID: service-2
     volumes:
-      - profile_pdf_temp:${PROFILE_PDF_TEMP_DIR:-/app/profile-pdf-temp}
-      - profile_pdf_backup:${PROFILE_PDF_BACKUP_DIR:-/app/profile-pdf-backup}
+      - ${PROFILE_PDF_TEMP_DIR}:/app/data/pdf-temp
+      - ${PROFILE_PDF_BACKUP_DIR}:/app/data/pdf-backup
     networks:
       - app_net
     depends_on:
@@ -125,11 +121,10 @@ services:
     restart: always
     command: uvicorn file_server.main:app --host 0.0.0.0 --port 8010
     environment:
-      PROFILE_PDF_TEMP_DIR: ${PROFILE_PDF_TEMP_DIR:-/app/profile-pdf-temp}
       PROFILE_PDF_TEMP_TTL_HOURS: ${PROFILE_PDF_TEMP_TTL_HOURS:-24}
       TZ: Asia/Shanghai
     volumes:
-      - profile_pdf_temp:${PROFILE_PDF_TEMP_DIR:-/app/profile-pdf-temp}:ro
+      - ${PROFILE_PDF_TEMP_DIR}:/app/data/pdf-temp:ro
     networks:
       - app_net
     depends_on:
@@ -142,15 +137,13 @@ services:
     restart: always
     command: python -m file_cleanup.main
     environment:
-      PROFILE_PDF_TEMP_DIR: ${PROFILE_PDF_TEMP_DIR:-/app/profile-pdf-temp}
-      PROFILE_PDF_BACKUP_DIR: ${PROFILE_PDF_BACKUP_DIR:-/app/profile-pdf-backup}
       PROFILE_PDF_TEMP_TTL_HOURS: ${PROFILE_PDF_TEMP_TTL_HOURS:-24}
       PROFILE_PDF_BACKUP_TTL_DAYS: ${PROFILE_PDF_BACKUP_TTL_DAYS:-7}
       PROFILE_PDF_CLEANUP_INTERVAL_SECONDS: ${PROFILE_PDF_CLEANUP_INTERVAL_SECONDS:-3600}
       TZ: Asia/Shanghai
     volumes:
-      - profile_pdf_temp:${PROFILE_PDF_TEMP_DIR:-/app/profile-pdf-temp}
-      - profile_pdf_backup:${PROFILE_PDF_BACKUP_DIR:-/app/profile-pdf-backup}
+      - ${PROFILE_PDF_TEMP_DIR}:/app/data/pdf-temp
+      - ${PROFILE_PDF_BACKUP_DIR}:/app/data/pdf-backup
     networks:
       - app_net
     depends_on:

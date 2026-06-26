@@ -33,8 +33,8 @@ def _positive_int(value: str | None, default: int) -> int:
 def get_cleanup_settings() -> CleanupSettings:
     """从环境变量加载清理配置"""
     return CleanupSettings(
-        temp_dir=Path(os.getenv("PROFILE_PDF_TEMP_DIR", "/app/profile-pdf-temp")),
-        backup_dir=Path(os.getenv("PROFILE_PDF_BACKUP_DIR", "/app/profile-pdf-backup")),
+        temp_dir=Path("/app/data/pdf-temp"),
+        backup_dir=Path("/app/data/pdf-backup"),
         temp_ttl_hours=_positive_int(os.getenv("PROFILE_PDF_TEMP_TTL_HOURS", "24"), 24),
         backup_ttl_days=_positive_int(os.getenv("PROFILE_PDF_BACKUP_TTL_DAYS", "7"), 7),
         interval_seconds=_positive_int(

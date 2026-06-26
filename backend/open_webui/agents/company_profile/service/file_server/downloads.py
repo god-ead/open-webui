@@ -30,7 +30,7 @@ def _positive_int(value: str | None, default: int) -> int:
 def get_download_settings() -> DownloadSettings:
     """从环境变量加载下载配置"""
     return DownloadSettings(
-        root_dir=Path(os.getenv("PROFILE_PDF_TEMP_DIR", "/app/profile-pdf-temp")),
+        root_dir=Path("/app/data/pdf-temp"),
         ttl_hours=_positive_int(os.getenv("PROFILE_PDF_TEMP_TTL_HOURS", "24"), 24),
     )
 

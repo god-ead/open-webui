@@ -180,7 +180,7 @@ services:
     container_name: ${SERVICE_NAME:-default_service}-backup
     restart: always
     volumes:
-      - ${BACKUP_DIR:-backups}:/app/backups
+      - ${BACKUP_DIR:-./data/backups}:/app/data/backups
     environment:
       DB_NAME: appdb
       DB_USER: postgres

@@ -32,8 +32,8 @@ class ProfilePdfExporter:
         """从环境变量构建导出器实例"""
         return cls(
             ProfilePdfExportConfig(
-                temp_dir=Path(os.getenv("PROFILE_PDF_TEMP_DIR", "/app/profile-pdf-temp")),
-                backup_dir=Path(os.getenv("PROFILE_PDF_BACKUP_DIR", "/app/profile-pdf-backup")),
+                temp_dir=Path("/app/data/pdf-temp"),
+                backup_dir=Path("/app/data/pdf-backup"),
                 download_base_url=os.getenv(
                     "PROFILE_PDF_DOWNLOAD_BASE_URL",
                     "http://localhost:8088/api/download",
