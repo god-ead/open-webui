@@ -51,6 +51,8 @@ services:
     image: ${DEPLOY_BASE_REGISTRY:-}${API_GATEWAY_IMAGE:-api-gateway:v0.1.0}
     container_name: ${SERVICE_NAME:-default_service}-api-1
     restart: always
+    volumes:
+      - ${LOG_DIR:-.log}:/app/.log
     environment:
       REDIS_URL: redis://redis:6379/0
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/appdb
@@ -58,6 +60,7 @@ services:
       RESULT_QUEUE: result_queue
       CALLBACK_MAX_RETRIES: ${CALLBACK_MAX_RETRIES:-3}
       CALLBACK_RETRY_DELAY_SECONDS: ${CALLBACK_RETRY_DELAY_SECONDS:-2}
+      ALLOWED_TASK_TYPES: ${ALLOWED_TASK_TYPES:-}
       TZ: Asia/Shanghai
       SERVICE_ID: api-gateway-1
       SERVICE_PORT: "8001"
@@ -73,6 +76,8 @@ services:
     image: ${DEPLOY_BASE_REGISTRY:-}${API_GATEWAY_IMAGE:-api-gateway:v0.1.0}
     container_name: ${SERVICE_NAME:-default_service}-api-2
     restart: always
+    volumes:
+      - ${LOG_DIR:-.log}:/app/.log
     environment:
       REDIS_URL: redis://redis:6379/0
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/appdb
@@ -80,6 +85,7 @@ services:
       RESULT_QUEUE: result_queue
       CALLBACK_MAX_RETRIES: ${CALLBACK_MAX_RETRIES:-3}
       CALLBACK_RETRY_DELAY_SECONDS: ${CALLBACK_RETRY_DELAY_SECONDS:-2}
+      ALLOWED_TASK_TYPES: ${ALLOWED_TASK_TYPES:-}
       TZ: Asia/Shanghai
       SERVICE_ID: api-gateway-2
       SERVICE_PORT: "8002"
@@ -97,6 +103,8 @@ services:
     image: ${DEPLOY_BASE_REGISTRY:-}${API_GATEWAY_IMAGE:-api-gateway:v0.1.0}
     container_name: ${SERVICE_NAME:-default_service}-api-3
     restart: always
+    volumes:
+      - ${LOG_DIR:-.log}:/app/.log
     environment:
       REDIS_URL: redis://redis:6379/0
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/appdb
@@ -104,6 +112,7 @@ services:
       RESULT_QUEUE: result_queue
       CALLBACK_MAX_RETRIES: ${CALLBACK_MAX_RETRIES:-3}
       CALLBACK_RETRY_DELAY_SECONDS: ${CALLBACK_RETRY_DELAY_SECONDS:-2}
+      ALLOWED_TASK_TYPES: ${ALLOWED_TASK_TYPES:-}
       TZ: Asia/Shanghai
       SERVICE_ID: api-gateway-3
       SERVICE_PORT: "8003"
@@ -138,6 +147,7 @@ services:
     restart: always
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ${LOG_DIR:-.log}:/app/.log
     environment:
       REDIS_URL: redis://redis:6379/0
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/appdb
@@ -160,6 +170,8 @@ services:
     image: ${DEPLOY_BASE_REGISTRY:-}${MONITOR_IMAGE:-monitor:v0.1.0}
     container_name: ${SERVICE_NAME:-default_service}-monitor
     restart: always
+    volumes:
+      - ${LOG_DIR:-.log}:/app/.log
     environment:
       REDIS_URL: redis://redis:6379/0
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/appdb

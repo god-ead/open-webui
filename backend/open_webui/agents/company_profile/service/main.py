@@ -11,6 +11,11 @@ import redis
 
 from app.db import db
 from handlers import HandlerRegistry, build_handler_registry
+from company_profile.application.errors import (
+    CompanyNotFoundError,
+    CompanyProfileConfigurationError,
+    LLMServiceError,
+)
 
 logger = logging.getLogger("company_profile.worker")
 
@@ -89,11 +94,25 @@ def _timeout_handler(signum, frame):
     raise TaskTimeoutError("任务处理超过 20 分钟")
 
 
-def build_failure_output(error_msg: str, version: str = "") -> dict:
+def build_failure_output(error_msg: str, code: int = 3, version: str = "") -> dict:
+    """构造统一失败响应。
+
+    Args:
+        error_msg: 错误描述信息
+        code: 业务状态码，默认 3（企业画像生成失败）。
+              1 = 大模型调用异常，2 = 调用失败，3 = 企业画像生成失败
+        version: 接口版本号
+    """
+    _CODE_LABELS = {
+        1: "大模型调用异常",
+        2: "调用失败",
+        3: "企业画像生成失败",
+    }
+    label = _CODE_LABELS.get(code, "企业画像生成失败")
     return {
-        "code": 3,
-        "message": f"企业画像生成失败: {error_msg}",
-        "timestamp": int(time.time() * 1000),
+        "code": code,
+        "message": f"{label}: {error_msg}",
+        "timestamp": time.strftime("%Y%m%d%H%M%S", time.localtime()),
         "data": {
             "profile": "",
             "version": version,
@@ -132,9 +151,9 @@ def process_job(task_data: dict, handler_registry: HandlerRegistry):
 
         # ── 执行业务逻辑（Handler 调度） ──
         result = handler_registry.dispatch(
-            task_type=task_data.get("task_type", ""),
-            payload=task_data.get("input", {}),
-        )
+                task_type=task_data.get("task_type", ""),
+                payload=task_data.get("input", {}),
+                            )
 
         elapsed = time.time() - start_time
 
@@ -160,7 +179,7 @@ def process_job(task_data: dict, handler_registry: HandlerRegistry):
         db.mark_failed(
             task_id,
             error_msg,
-            output=build_failure_output(error_msg),
+            output=build_failure_output(error_msg, code=3),
             processing_time=elapsed,
         )
         redis_client.rpush(
@@ -173,6 +192,46 @@ def process_job(task_data: dict, handler_registry: HandlerRegistry):
             }),
         )
         logger.error("任务 %s 超时失败", task_id)
+
+    except LLMServiceError as e:
+        error_msg = str(e)
+        elapsed = round(time.time() - start_time, 3)
+        db.mark_failed(
+            task_id,
+            error_msg,
+            output=build_failure_output(error_msg, code=LLMServiceError.error_code),
+            processing_time=elapsed,
+        )
+        redis_client.rpush(
+            RESULT_QUEUE,
+            json.dumps({
+                "task_id": task_id,
+                "status": "failed",
+                "worker": SERVICE_ID,
+                "callback": task_data.get("callback"),
+            }),
+        )
+        logger.error("任务 %s 大模型调用异常: %s", task_id, e)
+
+    except (CompanyProfileConfigurationError, CompanyNotFoundError, ValueError) as e:
+        error_msg = str(e)
+        elapsed = round(time.time() - start_time, 3)
+        db.mark_failed(
+            task_id,
+            error_msg,
+            output=build_failure_output(error_msg, code=2),
+            processing_time=elapsed,
+        )
+        redis_client.rpush(
+            RESULT_QUEUE,
+            json.dumps({
+                "task_id": task_id,
+                "status": "failed",
+                "worker": SERVICE_ID,
+                "callback": task_data.get("callback"),
+            }),
+        )
+        logger.error("任务 %s 调用失败: %s", task_id, e)
 
     except Exception as e:
         error_msg = str(e)
