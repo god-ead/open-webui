@@ -51,8 +51,8 @@ class CompanyProfileHandler:
         download_url = self.pdf_exporter.export(result)
         return {
             "code": 0,
-            "message": "生成该公司企业画像成功",
-            "timestamp": int(time.time() * 1000),
+            "message": "success",
+            "timestamp": time.strftime("%Y%m%d%H%M%S", time.localtime()),
             "data": {
                 "profile": download_url,
                 "version": result.version,
