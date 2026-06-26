@@ -111,7 +111,7 @@ payload {"company_name": "..."}
   → 校验 company_name 非空
   → CompanyProfileService.generate() (调用 LLM 分析)
   → ProfilePdfExporter.export() (生成 PDF + 备份)
-  → 返回 {"code":0, "data":{"profile":"下载链接", "version":"4.0"}}
+  → 返回 {"code":0, "data":{"profile":"下载链接", "version":"1.0"}}
 ```
 
 ### 4. ProfilePdfExporter — PDF 导出器
