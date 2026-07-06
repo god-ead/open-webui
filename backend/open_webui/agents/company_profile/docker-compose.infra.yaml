@@ -1,0 +1,207 @@
+# 通用基础服务模板。
+# 这里只维护可复用的基础服务：postgres、redis、api-gateway、nginx、scheduler、monitor、backup。
+# 业务服务、业务路由覆盖、业务文件存储等内容由 docker-compose.yaml 继承并覆盖。
+
+networks:
+  app_net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+
+services:
+  postgres:
+    image: ${DEPLOY_BASE_REGISTRY:-}${POSTGRES_IMAGE:-postgres:v0.1.0}
+    container_name: ${SERVICE_NAME:-default_service}-postgres
+    restart: always
+    command: postgres -c timezone=Asia/Shanghai
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: appdb
+      TZ: Asia/Shanghai
+    networks:
+      - app_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: ${DEPLOY_BASE_REGISTRY:-}${REDIS_IMAGE:-redis:v0.1.0}
+    container_name: ${SERVICE_NAME:-default_service}-redis
+    restart: always
+    volumes:
+      - redis_data:/data
+    environment:
+      TZ: Asia/Shanghai
+    networks:
+      - app_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api-gateway-1:
+    image: ${DEPLOY_BASE_REGISTRY:-}${API_GATEWAY_IMAGE:-api-gateway:v0.1.0}
+    container_name: ${SERVICE_NAME:-default_service}-api-1
+    restart: always
+    volumes:
+      - ${LOG_DIR:-.log}:/app/.log
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/appdb
+      TASK_QUEUE: task_queue
+      RESULT_QUEUE: result_queue
+      CALLBACK_MAX_RETRIES: ${CALLBACK_MAX_RETRIES:-3}
+      CALLBACK_RETRY_DELAY_SECONDS: ${CALLBACK_RETRY_DELAY_SECONDS:-2}
+      ALLOWED_TASK_TYPES: ${ALLOWED_TASK_TYPES:-}
+      TZ: Asia/Shanghai
+      SERVICE_ID: api-gateway-1
+      SERVICE_PORT: "8001"
+    networks:
+      - app_net
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  api-gateway-2:
+    image: ${DEPLOY_BASE_REGISTRY:-}${API_GATEWAY_IMAGE:-api-gateway:v0.1.0}
+    container_name: ${SERVICE_NAME:-default_service}-api-2
+    restart: always
+    volumes:
+      - ${LOG_DIR:-.log}:/app/.log
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/appdb
+      TASK_QUEUE: task_queue
+      RESULT_QUEUE: result_queue
+      CALLBACK_MAX_RETRIES: ${CALLBACK_MAX_RETRIES:-3}
+      CALLBACK_RETRY_DELAY_SECONDS: ${CALLBACK_RETRY_DELAY_SECONDS:-2}
+      ALLOWED_TASK_TYPES: ${ALLOWED_TASK_TYPES:-}
+      TZ: Asia/Shanghai
+      SERVICE_ID: api-gateway-2
+      SERVICE_PORT: "8002"
+    networks:
+      - app_net
+    depends_on:
+      api-gateway-1:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  api-gateway-3:
+    image: ${DEPLOY_BASE_REGISTRY:-}${API_GATEWAY_IMAGE:-api-gateway:v0.1.0}
+    container_name: ${SERVICE_NAME:-default_service}-api-3
+    restart: always
+    volumes:
+      - ${LOG_DIR:-.log}:/app/.log
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/appdb
+      TASK_QUEUE: task_queue
+      RESULT_QUEUE: result_queue
+      CALLBACK_MAX_RETRIES: ${CALLBACK_MAX_RETRIES:-3}
+      CALLBACK_RETRY_DELAY_SECONDS: ${CALLBACK_RETRY_DELAY_SECONDS:-2}
+      ALLOWED_TASK_TYPES: ${ALLOWED_TASK_TYPES:-}
+      TZ: Asia/Shanghai
+      SERVICE_ID: api-gateway-3
+      SERVICE_PORT: "8003"
+    networks:
+      - app_net
+    depends_on:
+      api-gateway-1:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  nginx:
+    image: ${DEPLOY_BASE_REGISTRY:-}${NGINX_IMAGE:-nginx:v0.1.0}
+    container_name: ${SERVICE_NAME:-default_service}-nginx
+    restart: always
+    ports:
+      - ${NGINX_HOST_PORT:-8088}:80
+    environment:
+      TZ: Asia/Shanghai
+    networks:
+      - app_net
+    depends_on:
+      - api-gateway-1
+      - api-gateway-2
+      - api-gateway-3
+
+  scheduler:
+    image: ${DEPLOY_BASE_REGISTRY:-}${SCHEDULER_IMAGE:-scheduler:v0.1.0}
+    container_name: ${SERVICE_NAME:-default_service}-scheduler
+    restart: always
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ${LOG_DIR:-.log}:/app/.log
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/appdb
+      TASK_QUEUE: task_queue
+      RESULT_QUEUE: result_queue
+      TZ: Asia/Shanghai
+      CHECK_INTERVAL: "10"
+      HEARTBEAT_TIMEOUT: "300"
+      TASK_TIMEOUT_MINUTES: "20"
+      SERVICE_NAME: ${SERVICE_NAME:-default_service}
+    networks:
+      - app_net
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  monitor:
+    image: ${DEPLOY_BASE_REGISTRY:-}${MONITOR_IMAGE:-monitor:v0.1.0}
+    container_name: ${SERVICE_NAME:-default_service}-monitor
+    restart: always
+    volumes:
+      - ${LOG_DIR:-.log}:/app/.log
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/appdb
+      TASK_QUEUE: task_queue
+      RESULT_QUEUE: result_queue
+      SERVICE_NAME: ${SERVICE_NAME:-default_service}
+      TZ: Asia/Shanghai
+    networks:
+      - app_net
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  backup:
+    image: ${DEPLOY_BASE_REGISTRY:-}${BACKUP_IMAGE:-db-backup:v0.1.0}
+    container_name: ${SERVICE_NAME:-default_service}-backup
+    restart: always
+    volumes:
+      - ${BACKUP_DIR:-./data/backups}:/app/data/backups
+    environment:
+      DB_NAME: appdb
+      DB_USER: postgres
+      PGPASSWORD: postgres
+      DB_HOST: postgres
+      BACKUP_TIME: 0 2
+      TZ: Asia/Shanghai
+    networks:
+      - app_net
+    depends_on:
+      postgres:
+        condition: service_healthy

@@ -1,6 +1,9 @@
 stages:
   - build    # 镜像构建与发布
 
+include:
+  - local: "backend/open_webui/agents/company_profile/service/.gitlab-ci.yml"
+
 variables:
   REGISTRY_URL: "172.19.52.215:9100"
   # 仅需修改此处：font-rec-zijia为harbor上的项目名称，zijia_font_recognition为构建镜像的名称

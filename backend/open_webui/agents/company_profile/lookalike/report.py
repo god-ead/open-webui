@@ -99,6 +99,10 @@ _SUPPLEMENT_CHANNELS: dict[str, str] = {
 }
 
 
+class PdfGenerationError(RuntimeError):
+    """Raised when a PDF report cannot be generated."""
+
+
 class ReportGenerator:
     """Generate Markdown and PDF analysis reports."""
 
@@ -122,33 +126,37 @@ class ReportGenerator:
         return "\n\n".join(sections) + "\n"
 
     def generate_pdf(self, data: AnalysisResult, output_path: str) -> None:
-        """Generate a PDF report. Falls back to Markdown if PDF deps are missing."""
+        """Generate a PDF report and raise when PDF rendering is unavailable."""
         md_content = self.generate_markdown(data)
         out = Path(output_path)
 
         try:
-            import markdown  # noqa: F401
+            import markdown
             from weasyprint import HTML  # type: ignore[import-untyped]
+        except ImportError as exc:
+            raise PdfGenerationError(
+                "PDF 依赖缺失，需要安装 markdown 和 weasyprint"
+            ) from exc
 
-            html_body = markdown.markdown(
-                md_content, extensions=["tables", "fenced_code"]
-            )
-            html_full = (
-                "<html><head><meta charset='utf-8'>"
-                "<style>body{font-family:sans-serif;padding:2em;}"
-                "table{border-collapse:collapse;width:100%;}"
-                "th,td{border:1px solid #ccc;padding:6px 10px;text-align:left;}"
-                "</style></head><body>" + html_body + "</body></html>"
-            )
+        html_body = markdown.markdown(md_content, extensions=["tables", "fenced_code"])
+        html_full = (
+            "<html><head><meta charset='utf-8'>"
+            "<style>body{font-family:sans-serif;padding:2em;}"
+            "table{border-collapse:collapse;width:100%;}"
+            "th,td{border:1px solid #ccc;padding:6px 10px;text-align:left;}"
+            "</style></head><body>" + html_body + "</body></html>"
+        )
+        try:
+            out.parent.mkdir(parents=True, exist_ok=True)
             HTML(string=html_full).write_pdf(str(out))
-            logger.info("PDF 报告已生成: %s", out)
-        except ImportError:
-            fallback = out.with_suffix(".md")
-            fallback.write_text(md_content, encoding="utf-8")
-            logger.warning(
-                "PDF 依赖缺失（需要 markdown 和 weasyprint），已降级输出 Markdown: %s",
-                fallback,
-            )
+        except Exception as exc:
+            if out.exists():
+                out.unlink()
+            raise PdfGenerationError(f"PDF 报告生成失败: {exc}") from exc
+
+        if not out.is_file():
+            raise PdfGenerationError(f"PDF 报告未生成: {out}")
+        logger.info("PDF 报告已生成: %s", out)
 
     # ------------------------------------------------------------------
     # Header
