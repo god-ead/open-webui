@@ -41,12 +41,12 @@ class ProfilePdfExporter:
             )
         )
 
-    def export(self, result: ProfileApplicationResult) -> str:
+    def export(self, result: ProfileApplicationResult, *, task_id: str = "") -> str:
         """导出 PDF：生成→写临时目录→复制备份（失败回滚）→返回公开下载链接"""
         self.config.temp_dir.mkdir(parents=True, exist_ok=True)
         self.config.backup_dir.mkdir(parents=True, exist_ok=True)
 
-        file_name = self._file_name(result.report_id)
+        file_name = self._file_name(result.report_id, task_id=task_id)
         temp_path = self.config.temp_dir / file_name
         backup_path = self.config.backup_dir / file_name
 
@@ -66,9 +66,13 @@ class ProfilePdfExporter:
         return f"{self.config.download_base_url.rstrip('/')}/{file_name}"
 
     @staticmethod
-    def _file_name(report_id: str) -> str:
-        """根据 report_id 生成安全的 PDF 文件名，保留中英文及数字，最长 120 字符"""
+    def _file_name(report_id: str, *, task_id: str = "") -> str:
+        """根据 report_id 和 task_id 生成安全文件名，避免公开 URL 带中文公司名。"""
         safe = re.sub(r"[^A-Za-z0-9一-鿿_.-]+", "_", report_id).strip("._")
         if not safe:
             safe = "company_profile"
+        if task_id:
+            parts = safe.split("_")
+            suffix = "_".join(parts[-3:]) if len(parts) >= 3 else safe
+            safe = f"{task_id[:16]}_{suffix}"
         return f"{safe[:120]}.pdf"
