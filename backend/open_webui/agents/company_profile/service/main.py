@@ -11,6 +11,7 @@ import threading
 import redis
 
 from app.db import db
+from app.profile_callback_client import callback_profile_result
 from handlers import HandlerRegistry, build_handler_registry
 from company_profile.application.errors import (
     CompanyNotFoundError,
@@ -132,6 +133,25 @@ def build_failure_output(error_msg: str, code: int = 3, version: str = "") -> di
     }
 
 
+def callback_completed_profile(task_id: str, task_data: dict, result: dict):
+    """企业画像成功后回调外部接口；回调失败不影响任务主流程。"""
+    # 当前回调协议只面向企业画像任务，其他 Handler 仍走原有结果队列流程。
+    if task_data.get("task_type") != "profile":
+        return
+
+    pdfurl = result.get("data", {}).get("profile", "")
+    if not pdfurl:
+        logger.warning("任务 %s 没有生成 pdfurl，跳过企业画像回调", task_id)
+        return
+
+    # 回调客户端内部吞掉网络/解析异常，这里只根据结果记录任务级日志。
+    callback_result = callback_profile_result(task_id, pdfurl)
+    if callback_result.ok:
+        logger.info("任务 %s 企业画像回调成功", task_id)
+    else:
+        logger.warning("任务 %s 企业画像回调失败: %s", task_id, callback_result.error)
+
+
 # ── 任务处理 ──────────────────────────────────────────────
 def process_job(task_data: dict, handler_registry: HandlerRegistry):
     """
@@ -182,6 +202,9 @@ def process_job(task_data: dict, handler_registry: HandlerRegistry):
                 "callback": task_data.get("callback"),
             }),
         )
+
+        # 企业画像 PDF 地址已写入任务结果后，再通知对方回调接口。
+        callback_completed_profile(task_id, task_data, result)
 
         logger.info("任务 %s 完成，耗时 %.2fs", task_id, elapsed)
 
