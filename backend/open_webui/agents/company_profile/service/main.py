@@ -5,6 +5,7 @@ import json
 import time
 import logging
 import signal
+import sys
 import threading
 
 import redis
@@ -16,6 +17,13 @@ from company_profile.application.errors import (
     CompanyProfileConfigurationError,
     LLMServiceError,
 )
+from common.quota import (
+    parse_quota_limit,
+    quota_key,
+    reserve_slot,
+    release_slot,
+    write_quota_meta,
+)
 
 logger = logging.getLogger("company_profile.worker")
 
@@ -24,6 +32,10 @@ SERVICE_ID = os.getenv("SERVICE_ID", "service")
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 TASK_QUEUE = os.getenv("TASK_QUEUE", "task_queue")
 RESULT_QUEUE = os.getenv("RESULT_QUEUE", "result_queue")
+SERVICE_NAME = os.getenv("SERVICE_NAME", "default_service")
+DAILY_VISIT_LIMIT = os.getenv("DAILY_VISIT_LIMIT", "0")
+# 固定时区 Asia/Shanghai，不开放配置（误配会致 fail-closed）
+QUOTA_TIMEZONE = "Asia/Shanghai"
 
 # ── 全局状态 ──────────────────────────────────────────────
 redis_client = redis.from_url(REDIS_URL, decode_responses=True)
@@ -265,10 +277,22 @@ def main():
     # 加载业务 Handler
     handler_registry = build_handler_registry()
 
+    # 解析每日访问限额：负数/非整数视为非法，告警并退出
+    limit, unlimited, quota_err = parse_quota_limit(DAILY_VISIT_LIMIT)
+    if quota_err:
+        logger.error("DAILY_VISIT_LIMIT 配置非法，拒绝启动（需为 0/空=不限 或正整数）：%s", quota_err)
+        try:
+            write_quota_meta(redis_client, SERVICE_NAME, limit, unlimited, quota_err, QUOTA_TIMEZONE)
+        except Exception:
+            pass
+        sys.exit(1)
+
     # 注册服务 + 连接数据库
     register_service()
     db.connect()
     logger.info("开始消费队列: %s", TASK_QUEUE)
+    logger.info("每日访问限额：%s", "不限" if unlimited else f"{limit} 次")
+    write_quota_meta(redis_client, SERVICE_NAME, limit, unlimited, quota_err, QUOTA_TIMEZONE)
 
     # 启动独立心跳线程（不受任务阻塞影响）
     hb_thread = threading.Thread(target=heartbeat_loop, daemon=True)
@@ -277,14 +301,38 @@ def main():
 
     # 主消费循环
     while running:
+        reserved_key = None
+        task_popped = False
         try:
+            if unlimited:
+                result = redis_client.brpop(TASK_QUEUE, timeout=1)
+                if result:
+                    _, task_json = result
+                    task_data = json.loads(task_json)
+                    process_job(task_data, handler_registry)
+                continue
+
+            key = quota_key(SERVICE_NAME, QUOTA_TIMEZONE)          # ① 整轮复用此 key
+            if not reserve_slot(redis_client, key, limit):          # ② 预占失败=已超额
+                time.sleep(60)
+                continue
+            reserved_key = key
             result = redis_client.brpop(TASK_QUEUE, timeout=1)
-            if result:
-                _, task_json = result
-                task_data = json.loads(task_json)
-                process_job(task_data, handler_registry)
+            if not result:
+                release_slot(redis_client, key)                     # ③ 空队列退还名额
+                reserved_key = None
+                continue
+            _, task_json = result
+            task_popped = True
+            task_data = json.loads(task_json)
+            process_job(task_data, handler_registry)
 
         except redis.ConnectionError:
+            if reserved_key and not task_popped:
+                try:
+                    release_slot(redis_client, reserved_key)
+                except Exception:
+                    pass
             logger.warning("Redis 断开，5秒后重连...")
             time.sleep(5)
         except Exception as e:
