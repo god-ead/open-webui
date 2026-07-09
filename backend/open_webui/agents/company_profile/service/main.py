@@ -22,7 +22,6 @@ from common.quota import (
     parse_quota_limit,
     quota_key,
     reserve_slot,
-    release_slot,
     write_quota_meta,
 )
 
@@ -35,6 +34,9 @@ TASK_QUEUE = os.getenv("TASK_QUEUE", "task_queue")
 RESULT_QUEUE = os.getenv("RESULT_QUEUE", "result_queue")
 SERVICE_NAME = os.getenv("SERVICE_NAME", "default_service")
 DAILY_VISIT_LIMIT = os.getenv("DAILY_VISIT_LIMIT", "0")
+DAILY_VISIT_LIMIT_SLEEP_SECONDS = int(os.getenv("DAILY_VISIT_LIMIT_SLEEP_SECONDS", "300"))
+QUOTA_LIMIT_STAGE1_BASE_SECONDS = 10
+QUOTA_LIMIT_STAGE2_LOG_SECONDS = 60 * 60
 # 固定时区 Asia/Shanghai，不开放配置（误配会致 fail-closed）
 QUOTA_TIMEZONE = "Asia/Shanghai"
 
@@ -150,6 +152,41 @@ def callback_completed_profile(task_id: str, task_data: dict, result: dict):
         logger.info("任务 %s 企业画像回调成功", task_id)
     else:
         logger.warning("任务 %s 企业画像回调失败: %s", task_id, callback_result.error)
+
+
+def pop_limited_task(redis_client, task_queue: str, service_name: str, timezone: str, limit: int):
+    """先取任务再扣额度；额度不足时放回队列，避免空队列预占污染监控。"""
+    result = redis_client.brpop(task_queue, timeout=1)
+    if not result:
+        return None, False
+
+    _, task_json = result
+    key = quota_key(service_name, timezone)
+    if not reserve_slot(redis_client, key, limit):
+        redis_client.rpush(task_queue, task_json)
+        return None, True
+
+    return json.loads(task_json), False
+
+
+def quota_limit_sleep_plan(attempts: int) -> tuple[int, str]:
+    """额度不足时的两阶段睡眠策略：先指数退避，再固定间隔检查。"""
+    stage1_sleep = QUOTA_LIMIT_STAGE1_BASE_SECONDS * (2 ** min(attempts, 16))
+    if stage1_sleep < DAILY_VISIT_LIMIT_SLEEP_SECONDS:
+        return stage1_sleep, "stage1"
+    return DAILY_VISIT_LIMIT_SLEEP_SECONDS, "stage2"
+
+
+def should_log_quota_sleep(redis_client, service_name: str, stage: str) -> bool:
+    """只对二阶段额度睡眠提示做 Redis 抢锁，其他日志不受影响。"""
+    if stage != "stage2":
+        return True
+
+    try:
+        key = f"quota:limit_sleep_log:{service_name}:stage2"
+        return bool(redis_client.set(key, "1", nx=True, ex=QUOTA_LIMIT_STAGE2_LOG_SECONDS))
+    except Exception:
+        return False
 
 
 # ── 任务处理 ──────────────────────────────────────────────
@@ -325,9 +362,8 @@ def main():
     logger.info("心跳线程已启动")
 
     # 主消费循环
+    quota_limit_attempts = 0
     while running:
-        reserved_key = None
-        task_popped = False
         try:
             if unlimited:
                 result = redis_client.brpop(TASK_QUEUE, timeout=1)
@@ -337,27 +373,29 @@ def main():
                     process_job(task_data, handler_registry)
                 continue
 
-            key = quota_key(SERVICE_NAME, QUOTA_TIMEZONE)          # ① 整轮复用此 key
-            if not reserve_slot(redis_client, key, limit):          # ② 预占失败=已超额
-                time.sleep(60)
+            task_data, over_limit = pop_limited_task(
+                redis_client,
+                TASK_QUEUE,
+                SERVICE_NAME,
+                QUOTA_TIMEZONE,
+                limit,
+            )
+            if over_limit:
+                sleep_seconds, sleep_stage = quota_limit_sleep_plan(quota_limit_attempts)
+                if should_log_quota_sleep(redis_client, SERVICE_NAME, sleep_stage):
+                    logger.info(
+                        "每日访问额度已用尽，任务已放回队列，%s 秒后重试",
+                        sleep_seconds,
+                    )
+                time.sleep(sleep_seconds)
+                quota_limit_attempts += 1
                 continue
-            reserved_key = key
-            result = redis_client.brpop(TASK_QUEUE, timeout=1)
-            if not result:
-                release_slot(redis_client, key)                     # ③ 空队列退还名额
-                reserved_key = None
+            if not task_data:
                 continue
-            _, task_json = result
-            task_popped = True
-            task_data = json.loads(task_json)
+            quota_limit_attempts = 0
             process_job(task_data, handler_registry)
 
         except redis.ConnectionError:
-            if reserved_key and not task_popped:
-                try:
-                    release_slot(redis_client, reserved_key)
-                except Exception:
-                    pass
             logger.warning("Redis 断开，5秒后重连...")
             time.sleep(5)
         except Exception as e:
