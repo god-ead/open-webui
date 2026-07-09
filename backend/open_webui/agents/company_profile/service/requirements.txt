@@ -1,4 +1,6 @@
 redis==5.0.1
 psycopg2-binary==2.9.9
+requests==2.32.3
+cryptography==46.0.5
 fastapi
 uvicorn[standard]
