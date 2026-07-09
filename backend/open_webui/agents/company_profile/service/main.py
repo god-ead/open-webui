@@ -182,9 +182,11 @@ def process_job(task_data: dict, handler_registry: HandlerRegistry):
         logger.info("开始处理任务 %s", task_id)
 
         # ── 执行业务逻辑（Handler 调度） ──
+        payload = dict(task_data.get("input", {}))
+        payload["task_id"] = task_id
         result = handler_registry.dispatch(
                 task_type=task_data.get("task_type", ""),
-                payload=task_data.get("input", {}),
+                payload=payload,
                             )
 
         elapsed = time.time() - start_time

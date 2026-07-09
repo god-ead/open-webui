@@ -46,9 +46,10 @@ class CompanyProfileHandler:
         company_name = str(payload.get("company_name", "")).strip()
         if not company_name:
             raise ValueError("input.company_name 不能为空")
+        task_id = str(payload.get("task_id", ""))[:16]
 
         result = self.service.generate(company_name)
-        download_url = self.pdf_exporter.export(result)
+        download_url = self.pdf_exporter.export(result, task_id=task_id)
         return {
             "code": 0,
             "message": "success",
