@@ -43,7 +43,7 @@ def build_download_response(
 
     1. 仅允许 .pdf 后缀的纯文件名（防目录遍历攻击）
     2. 解析后的绝对路径必须在 root_dir 目录树内
-    3. 超过 TTL 的文件返回 410 Gone
+    3. 超过 TTL 的文件返回 404
     """
     resolved = settings or get_download_settings()
 
@@ -60,6 +60,6 @@ def build_download_response(
     # TTL 过期校验
     ttl_seconds = resolved.ttl_hours * 60 * 60
     if time.time() - path.stat().st_mtime > ttl_seconds:
-        raise HTTPException(status_code=410, detail="文件已过期")
+        raise HTTPException(status_code=404, detail="文件已过期")
 
     return FileResponse(path, media_type="application/pdf", filename=file_name)

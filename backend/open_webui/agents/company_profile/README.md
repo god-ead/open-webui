@@ -37,6 +37,7 @@ company_profile/
 │   ├── main.py               # Worker 主入口（Redis 消费 + 任务处理）
 │   ├── app/
 │   │   ├── db.py             # PostgreSQL 任务状态持久化
+│   │   ├── profile_callback_client.py # 企业画像完成回调客户端
 │   │   └── export_tasks.py   # 任务数据导出脚本
 │   ├── handlers/             # 任务 Handler 注册与路由
 │   │   ├── registry.py       # HandlerRegistry 注册中心
@@ -78,7 +79,7 @@ company_profile/
 
 ### 模式二：分布式任务服务（异步，PDF 输出）
 
-通过 API Gateway 提交任务 → Redis 队列 → Worker 消费 → 生成 PDF → 返回下载链接。
+通过 API Gateway 提交任务 → Redis 队列 → Worker 消费 → 生成 PDF → 返回下载链接，并在 profile 任务成功后回调外部接口。
 
 ```
 POST /api/task {"task_type":"profile","input":{"company_name":"..."}}
@@ -87,7 +88,8 @@ POST /api/task {"task_type":"profile","input":{"company_name":"..."}}
     ↓ CompanyProfileHandler.handle()
     ↓ service.generate() → 分析
     ↓ ProfilePdfExporter.export() → PDF + 下载链接
-    ↓ 通知回调 + WebSocket 推送
+    ↓ 写入任务结果 + result_queue 状态通知
+    ↓ Worker 调用企业画像完成回调接口
 ```
 
 架构图：
@@ -150,9 +152,63 @@ docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d
 
 ```
 report_id: {公司名}_{时间戳}_{8位UUID}
-    ↓ _file_name() 安全处理（保留中文、过滤路径遍历字符）
-文件名: {公司名}_{时间戳}_{8位UUID}.pdf
+    ↓ _file_name() 安全处理（过滤路径遍历字符，公开 URL 去掉公司名）
+文件名: {task_id前16位}_{时间戳}_{8位UUID}.pdf
 ```
+
+示例：
+
+```text
+cff50e2f-12fd-44_20260709_215808_0ab8b83e.pdf
+```
+
+### 企业画像完成回调
+
+profile 任务成功生成 PDF 后，Worker 会调用任务请求中传入的 `callback` 地址。请求 body 和 header `token` 分别加密：
+
+| 内容 | 明文 | 密钥配置 |
+|---|---|---|
+| body | `{"task_id":"任务ID","pdfurl":"PDF下载地址"}` | `PROFILE_CALLBACK_BODY_AES_KEY` / `PROFILE_CALLBACK_BODY_AES_IV` |
+| header `token` | `{"IP":"本服务IP","date":"YYYY-MM-DD HH:mm"}` | `PROFILE_CALLBACK_TOKEN_AES_KEY` / `PROFILE_CALLBACK_TOKEN_AES_IV` |
+
+加密方式为 AES-128-CBC + PKCS7，输出 Base64。`PROFILE_CALLBACK_TIMEOUT=0` 表示不启用 `requests.post` 客户端超时限制。
+
+对方返回的 `response_body` 使用 BODY KEY/IV 解密。只有 HTTP 状态码为 2xx、响应可解密为合法 JSON 且 `code=0`，才视为回调成功；失败时最多发送 3 次。例如：
+
+```text
+response_body=5XN73b6j8DnVfq6dUPNiYHuHyrwAYVXPd+mti8okrJk=
+```
+
+解密后：
+
+```json
+{"code":0,"msg":"操作成功"}
+```
+
+排查命令：
+
+```bash
+python3 service/decode_callback_response.py \
+  --env-file .env \
+  '5XN73b6j8DnVfq6dUPNiYHuHyrwAYVXPd+mti8okrJk='
+```
+
+### 每日额度
+
+`DAILY_VISIT_LIMIT` 控制每日最多处理任务数：
+
+- `0` 或空表示不限额
+- 正整数表示每日最多处理 N 个任务
+- 额度 Redis key 按日期区分：`quota:used:{SERVICE_NAME}:{YYYY-MM-DD}`
+
+额度不足时任务会放回队列，并进入两阶段睡眠：
+
+| 阶段 | 策略 | 日志 |
+|---|---|---|
+| 一阶段 | `10s * 2^n`，直到达到 `DAILY_VISIT_LIMIT_SLEEP_SECONDS` | 每次打印 |
+| 二阶段 | 固定 `DAILY_VISIT_LIMIT_SLEEP_SECONDS`，默认 300s | Redis 抢锁后每小时最多打印一次 |
+
+二阶段日志锁只影响“额度不足导致的 sleep 提示”，其他日志不受影响。
 
 ## 环境变量
 
@@ -165,9 +221,18 @@ report_id: {公司名}_{时间戳}_{8位UUID}
 | `REDIS_URL` | Redis 连接串 | `redis://redis:6379/0` |
 | `DATABASE_URL` | PostgreSQL 连接串 | `postgresql://...` |
 | `HANDLER_MODULES` | Handler 注册列表 | `handlers.company_profile:CompanyProfileHandler` |
+| `DAILY_VISIT_LIMIT` | 每日访问次数限额，0/空表示不限 | `200` |
+| `DAILY_VISIT_LIMIT_SLEEP_SECONDS` | 额度不足后二阶段检查间隔（秒） | `300` |
 | `PROFILE_PDF_DOWNLOAD_BASE_URL` | PDF 下载基础 URL | `http://127.0.0.1:8088/api/download` |
 | `PROFILE_PDF_TEMP_TTL_HOURS` | PDF 临时文件保留（小时） | `24` |
 | `PROFILE_PDF_BACKUP_TTL_DAYS` | PDF 备份保留（天） | `7` |
+| `PROFILE_CALLBACK_BODY_AES_KEY` | 回调 body AES key | — |
+| `PROFILE_CALLBACK_BODY_AES_IV` | 回调 body AES IV | — |
+| `PROFILE_CALLBACK_TOKEN_AES_KEY` | 回调 token AES key | — |
+| `PROFILE_CALLBACK_TOKEN_AES_IV` | 回调 token AES IV | — |
+| `PROFILE_CALLBACK_SERVER_IP` | token 明文中的本服务 IP | — |
+| `PROFILE_CALLBACK_TIMEOUT` | 回调超时，0 表示不启用 requests 超时 | `0` |
+| `PROFILE_CALLBACK_RETRY_DELAY_SECONDS` | 回调失败后的重试间隔基数（秒） | `5` |
 
 完整变量列表见 [.env.example](.env.example)。
 

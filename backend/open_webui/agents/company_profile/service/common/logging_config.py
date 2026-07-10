@@ -33,6 +33,8 @@ def _ensure_root_configured(
 
     root = logging.getLogger()
     root.setLevel(level)
+    # PDF 生成时字体裁剪过程中，仅保留其警告和错误日志。
+    logging.getLogger("fontTools.subset").setLevel(logging.WARNING)
     formatter = logging.Formatter(fmt, datefmt="%Y-%m-%d %H:%M:%S")
 
     # 控制台
