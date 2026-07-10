@@ -50,6 +50,7 @@ service/
 ├── main.py                 # Worker 主入口：心跳 + 消费循环 + 任务处理
 ├── app/
 │   ├── db.py               # Database：PostgreSQL 任务状态管理
+│   ├── profile_callback_client.py # 企业画像完成回调客户端
 │   └── export_tasks.py     # 任务数据导出脚本（JSON）
 ├── handlers/
 │   ├── __init__.py          # Handler 包入口
@@ -83,15 +84,46 @@ while running:
   process_job():
     1. 检查任务状态（跳过已完成/失败的）
     2. mark_processing → dispatch Handler → mark_completed/failed
-    3. rpush result_queue（触发回调 + WebSocket 通知）
+    3. rpush result_queue（API Gateway / WebSocket 状态通知）
+    4. profile 任务成功后直接调用企业画像回调接口
 ```
 
 **关键设计：**
 - 心跳线程独立运行（每 5s，不受任务阻塞），向 Redis 上报存活
 - 20 分钟超时保护（SIGALRM），超时自动标记失败
 - 消费循环与心跳解耦，Worker 正在处理长任务时心跳不中断
+- 每日额度启用时先取任务再扣额度，避免空队列预占污染监控
 
-### 2. HandlerRegistry — 插件式 Handler 路由
+### 2. 每日额度控制
+
+每日额度由 `DAILY_VISIT_LIMIT` 控制：
+
+- `0` 或空：不限额
+- 正整数：当天最多处理 N 个任务
+- 负数 / 非整数：视为非法配置，Worker 拒绝启动
+
+额度计数使用按日期区分的 Redis key：
+
+```
+quota:used:{SERVICE_NAME}:{YYYY-MM-DD}
+```
+
+Worker 获取到任务后才尝试扣额度。额度不足时任务会放回队列，并进入两阶段睡眠：
+
+| 阶段 | 策略 | 日志 |
+|---|---|---|
+| 一阶段 | `10s * 2^n`，直到达到 `DAILY_VISIT_LIMIT_SLEEP_SECONDS` | 每次打印 |
+| 二阶段 | 固定 `DAILY_VISIT_LIMIT_SLEEP_SECONDS`，默认 300s | Redis 抢锁后每小时最多打印一次 |
+
+二阶段日志锁只影响“额度不足导致的 sleep 提示”，不影响其他日志：
+
+```
+quota:limit_sleep_log:{SERVICE_NAME}:stage2
+```
+
+一旦成功扣到额度并开始处理任务，本 Worker 的睡眠计数会重置为 0。
+
+### 3. HandlerRegistry — 插件式 Handler 路由
 
 通过环境变量 `HANDLER_MODULES` 动态加载业务 Handler：
 
@@ -104,7 +136,7 @@ HANDLER_MODULES=handlers.company_profile:CompanyProfileHandler
 - 支持逗号分隔注册多个 Handler
 - Handler 通过 `from_env()` 工厂方法从环境变量构建
 
-### 3. CompanyProfileHandler — 企业画像任务处理
+### 4. CompanyProfileHandler — 企业画像任务处理
 
 ```
 payload {"company_name": "..."}
@@ -114,7 +146,7 @@ payload {"company_name": "..."}
   → 返回 {"code":0, "data":{"profile":"下载链接", "version":"1.0"}}
 ```
 
-### 4. ProfilePdfExporter — PDF 导出器
+### 5. ProfilePdfExporter — PDF 导出器
 
 ```
 AnalysisResult
@@ -124,18 +156,73 @@ AnalysisResult
   → 返回 download_base_url/{file_name}
 ```
 
-文件名 `_file_name()` 保留中英文字符，过滤路径遍历字符，最长 120 字符。
+文件名 `_file_name()` 会过滤路径遍历字符。任务中带 `task_id` 时，为避免公开 URL 暴露中文公司名，文件名格式为：
+
+```
+{task_id前16位}_{时间戳}_{8位UUID}.pdf
+```
+
+示例：
+
+```
+cff50e2f-12fd-44_20260709_215808_0ab8b83e.pdf
+```
 
 备份失败时自动回滚（删除临时文件）再抛出异常。
 
-### 5. file_server — PDF HTTP 下载服务
+### 6. 企业画像完成回调
+
+profile 任务成功生成 PDF 后，Worker 会直接调用任务请求中的 `callback` 地址。回调最终失败只记录日志，不会把已完成任务改为失败。
+
+请求 body 明文：
+
+```json
+{"task_id":"任务ID","pdfurl":"PDF下载地址"}
+```
+
+请求 token 明文：
+
+```json
+{"IP":"本服务IP","date":"YYYY-MM-DD HH:mm"}
+```
+
+加密规则：
+
+| 内容 | 密钥配置 |
+|---|---|
+| body | `PROFILE_CALLBACK_BODY_AES_KEY` / `PROFILE_CALLBACK_BODY_AES_IV` |
+| header `token` | `PROFILE_CALLBACK_TOKEN_AES_KEY` / `PROFILE_CALLBACK_TOKEN_AES_IV` |
+
+均使用 AES-128-CBC + PKCS7，输出 Base64。`PROFILE_CALLBACK_TIMEOUT=0` 表示不启用 `requests.post` 客户端超时限制。
+
+对方返回的 `response_body` 使用 BODY KEY/IV 解密。只有 HTTP 状态码为 2xx、响应可解密为合法 JSON 且 `code=0`，才视为回调成功；失败时最多发送 3 次。例如：
+
+```text
+response_body=5XN73b6j8DnVfq6dUPNiYHuHyrwAYVXPd+mti8okrJk=
+```
+
+使用 BODY KEY/IV 解密后：
+
+```json
+{"code":0,"msg":"操作成功"}
+```
+
+排查时可使用：
+
+```bash
+python3 service/decode_callback_response.py \
+  --env-file ../.env \
+  '5XN73b6j8DnVfq6dUPNiYHuHyrwAYVXPd+mti8okrJk='
+```
+
+### 7. file_server — PDF HTTP 下载服务
 
 基于 FastAPI 的独立服务，挂载 `profile_pdf_temp` 卷（只读），提供安全的 PDF 下载。
 
 **三层安全校验：**
 1. 仅允许 `.pdf` 后缀的纯文件名（防目录遍历）
 2. 绝对路径必须在 `root_dir` 目录树内
-3. 超 TTL 返回 `410 Gone`
+3. 超 TTL 的文件按不可用文件返回 `404 Not Found`
 
 **路由：**
 | 路径 | 说明 |
@@ -143,7 +230,7 @@ AnalysisResult
 | `GET /health` | 健康检查 |
 | `GET /api/download/{file_name}` | PDF 下载 |
 
-### 6. file_cleanup — 过期文件清理
+### 8. file_cleanup — 过期文件清理
 
 定时循环执行，基于文件 `st_mtime` 判断过期：
 
@@ -153,7 +240,7 @@ AnalysisResult
 | 备份目录 | 7 天 | `PROFILE_PDF_BACKUP_TTL_DAYS` |
 | 清理间隔 | 3600 秒 | `PROFILE_PDF_CLEANUP_INTERVAL_SECONDS` |
 
-### 7. nginx — 反向代理
+### 9. nginx — 反向代理
 
 [api_upstream.conf](nginx/api_upstream.conf) 配置：
 - `/api/*` → `api_backend`（3 个 API Gateway，least_conn 负载均衡）
@@ -194,9 +281,9 @@ docker build -f service/Dockerfile -t company-profile-service:v0.1.0 .
    ├── CompanyProfileHandler.handle()
    └── UPDATE tasks (status=completed, output=...)
 
-3. RPUSH result_queue
-   ├── API Gateway 消费回调
-   ├── WebSocket 推送状态变更
+3. Worker 写入完成结果
+   ├── RPUSH result_queue（API Gateway / WebSocket 状态通知）
+   ├── profile 任务成功后调用企业画像回调接口
    └── 超时/失败 → SCHEDULER 检测心跳 → 重新分配
 ```
 

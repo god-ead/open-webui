@@ -141,17 +141,33 @@ def callback_completed_profile(task_id: str, task_data: dict, result: dict):
     if task_data.get("task_type") != "profile":
         return
 
+    callback_url = task_data.get("callback")
+    if not callback_url:
+        logger.info("任务 %s 未提供 callback，跳过企业画像回调", task_id)
+        return
+
     pdfurl = result.get("data", {}).get("profile", "")
     if not pdfurl:
         logger.warning("任务 %s 没有生成 pdfurl，跳过企业画像回调", task_id)
         return
 
     # 回调客户端内部吞掉网络/解析异常，这里只根据结果记录任务级日志。
-    callback_result = callback_profile_result(task_id, pdfurl)
+    callback_result = callback_profile_result(
+        task_id,
+        pdfurl,
+        str(callback_url),
+    )
     if callback_result.ok:
         logger.info("任务 %s 企业画像回调成功", task_id)
     else:
         logger.warning("任务 %s 企业画像回调失败: %s", task_id, callback_result.error)
+
+
+def result_queue_callback(task_data: dict) -> str | None:
+    """profile 任务由专用加密客户端回调，不再触发 API Gateway 通用回调。"""
+    if task_data.get("task_type") == "profile":
+        return None
+    return task_data.get("callback")
 
 
 def pop_limited_task(redis_client, task_queue: str, service_name: str, timezone: str, limit: int):
@@ -196,9 +212,10 @@ def process_job(task_data: dict, handler_registry: HandlerRegistry):
 
     1. 检查任务状态（跳过已完成/失败/取消的任务）
     2. 标记 processing → 执行 handler → 标记 completed/failed
-    3. 推送到 RESULT_QUEUE 触发回调 + WebSocket 通知
+    3. 推送到 RESULT_QUEUE 触发状态通知；profile 回调由专用加密客户端发送
     """
     task_id = task_data["task_id"]
+    gateway_callback = result_queue_callback(task_data)
     start_time = time.time()
 
     # 设置 20 分钟超时
@@ -238,7 +255,7 @@ def process_job(task_data: dict, handler_registry: HandlerRegistry):
                 "task_id": task_id,
                 "status": "completed",
                 "worker": SERVICE_ID,
-                "callback": task_data.get("callback"),
+                "callback": gateway_callback,
             }),
         )
 
@@ -262,7 +279,7 @@ def process_job(task_data: dict, handler_registry: HandlerRegistry):
                 "task_id": task_id,
                 "status": "failed",
                 "worker": SERVICE_ID,
-                "callback": task_data.get("callback"),
+                "callback": gateway_callback,
             }),
         )
         logger.error("任务 %s 超时失败", task_id)
@@ -282,7 +299,7 @@ def process_job(task_data: dict, handler_registry: HandlerRegistry):
                 "task_id": task_id,
                 "status": "failed",
                 "worker": SERVICE_ID,
-                "callback": task_data.get("callback"),
+                "callback": gateway_callback,
             }),
         )
         logger.error("任务 %s 大模型调用异常: %s", task_id, e)
@@ -302,7 +319,7 @@ def process_job(task_data: dict, handler_registry: HandlerRegistry):
                 "task_id": task_id,
                 "status": "failed",
                 "worker": SERVICE_ID,
-                "callback": task_data.get("callback"),
+                "callback": gateway_callback,
             }),
         )
         logger.error("任务 %s 调用失败: %s", task_id, e)
@@ -322,7 +339,7 @@ def process_job(task_data: dict, handler_registry: HandlerRegistry):
                 "task_id": task_id,
                 "status": "failed",
                 "worker": SERVICE_ID,
-                "callback": task_data.get("callback"),
+                "callback": gateway_callback,
             }),
         )
         logger.error("任务 %s 失败: %s", task_id, e)
@@ -402,7 +419,7 @@ def main():
             logger.error("错误: %s", e)
             time.sleep(1)
 
-    # 优雅退出
+    # 退出
     unregister_service()
     db.close()
     redis_client.close()
