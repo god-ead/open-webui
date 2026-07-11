@@ -43,7 +43,10 @@ class CompanyProfileHandler:
 
     def handle(self, payload: dict[str, Any]) -> dict[str, Any]:
         """处理企业画像生成任务，返回包含下载链接的统一响应"""
-        company_name = str(payload.get("company_name", "")).strip()
+        company_name_value = payload.get("company_name", "")
+        if not isinstance(company_name_value, str):
+            raise ValueError("input.company_name 必须是字符串")
+        company_name = company_name_value.strip()
         if not company_name:
             raise ValueError("input.company_name 不能为空")
         task_id = str(payload.get("task_id", ""))[:16]

@@ -37,7 +37,6 @@ company_profile/
 │   ├── main.py               # Worker 主入口（Redis 消费 + 任务处理）
 │   ├── app/
 │   │   ├── db.py             # PostgreSQL 任务状态持久化
-│   │   ├── profile_callback_client.py # 企业画像完成回调客户端
 │   │   └── export_tasks.py   # 任务数据导出脚本
 │   ├── handlers/             # 任务 Handler 注册与路由
 │   │   ├── registry.py       # HandlerRegistry 注册中心
@@ -89,7 +88,8 @@ POST /api/task {"task_type":"profile","input":{"company_name":"..."}}
     ↓ service.generate() → 分析
     ↓ ProfilePdfExporter.export() → PDF + 下载链接
     ↓ 写入任务结果 + result_queue 状态通知
-    ↓ Worker 调用企业画像完成回调接口
+    ↓ Worker 写入明文 callback_payload
+    ↓ API Gateway 加密并调用企业画像完成回调接口
 ```
 
 架构图：
@@ -164,14 +164,14 @@ cff50e2f-12fd-44_20260709_215808_0ab8b83e.pdf
 
 ### 企业画像完成回调
 
-profile 任务成功生成 PDF 后，Worker 会调用任务请求中传入的 `callback` 地址。请求 body 和 header `token` 分别加密：
+profile 任务成功生成 PDF 后，Worker 将明文回调数据写入结果队列，由 API Gateway 加密并调用任务请求中的 `callback` 地址：
 
 | 内容 | 明文 | 密钥配置 |
 |---|---|---|
-| body | `{"task_id":"任务ID","pdfurl":"PDF下载地址"}` | `PROFILE_CALLBACK_BODY_AES_KEY` / `PROFILE_CALLBACK_BODY_AES_IV` |
-| header `token` | `{"IP":"本服务IP","date":"YYYY-MM-DD HH:mm"}` | `PROFILE_CALLBACK_TOKEN_AES_KEY` / `PROFILE_CALLBACK_TOKEN_AES_IV` |
+| body | `{"task_id":"任务ID","pdfurl":"PDF下载地址"}` | `CALLBACK_BODY_AES_KEY` / `CALLBACK_BODY_AES_IV` |
+| header `token` | `{"IP":"本服务IP","date":"YYYY-MM-DD HH:mm"}` | `CALLBACK_TOKEN_AES_KEY` / `CALLBACK_TOKEN_AES_IV` |
 
-加密方式为 AES-128-CBC + PKCS7，输出 Base64。`PROFILE_CALLBACK_TIMEOUT=0` 表示不启用 `requests.post` 客户端超时限制。
+加密方式为 AES-128-CBC + PKCS7，输出 Base64。`CALLBACK_TIMEOUT=0` 表示不启用 HTTP 客户端超时限制。
 
 对方返回的 `response_body` 使用 BODY KEY/IV 解密。只有 HTTP 状态码为 2xx、响应可解密为合法 JSON 且 `code=0`，才视为回调成功；失败时最多发送 3 次。例如：
 
@@ -183,14 +183,6 @@ response_body=5XN73b6j8DnVfq6dUPNiYHuHyrwAYVXPd+mti8okrJk=
 
 ```json
 {"code":0,"msg":"操作成功"}
-```
-
-排查命令：
-
-```bash
-python3 service/decode_callback_response.py \
-  --env-file .env \
-  '5XN73b6j8DnVfq6dUPNiYHuHyrwAYVXPd+mti8okrJk='
 ```
 
 ### 每日额度
@@ -226,13 +218,13 @@ python3 service/decode_callback_response.py \
 | `PROFILE_PDF_DOWNLOAD_BASE_URL` | PDF 下载基础 URL | `http://127.0.0.1:8088/api/download` |
 | `PROFILE_PDF_TEMP_TTL_HOURS` | PDF 临时文件保留（小时） | `24` |
 | `PROFILE_PDF_BACKUP_TTL_DAYS` | PDF 备份保留（天） | `7` |
-| `PROFILE_CALLBACK_BODY_AES_KEY` | 回调 body AES key | — |
-| `PROFILE_CALLBACK_BODY_AES_IV` | 回调 body AES IV | — |
-| `PROFILE_CALLBACK_TOKEN_AES_KEY` | 回调 token AES key | — |
-| `PROFILE_CALLBACK_TOKEN_AES_IV` | 回调 token AES IV | — |
-| `PROFILE_CALLBACK_SERVER_IP` | token 明文中的本服务 IP | — |
-| `PROFILE_CALLBACK_TIMEOUT` | 回调超时，0 表示不启用 requests 超时 | `0` |
-| `PROFILE_CALLBACK_RETRY_DELAY_SECONDS` | 回调失败后的重试间隔基数（秒） | `5` |
+| `CALLBACK_MODE` | API Gateway 回调模式，企业画像使用 `aes_cbc` | `aes_cbc` |
+| `CALLBACK_BODY_AES_KEY` / `CALLBACK_BODY_AES_IV` | 回调 body AES key/IV | — |
+| `CALLBACK_TOKEN_AES_KEY` / `CALLBACK_TOKEN_AES_IV` | 回调 token AES key/IV | — |
+| `CALLBACK_SERVER_IP` | token 明文中的本服务 IP | — |
+| `CALLBACK_TIMEOUT` | 回调超时，0 表示不限制 | `0` |
+| `CALLBACK_MAX_ATTEMPTS` | 最多发送次数，包含首次发送 | `3` |
+| `CALLBACK_RETRY_DELAY_SECONDS` | 回调失败后的重试间隔基数（秒） | `5` |
 
 完整变量列表见 [.env.example](.env.example)。
 

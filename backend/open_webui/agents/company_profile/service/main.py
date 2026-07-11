@@ -11,7 +11,6 @@ import threading
 import redis
 
 from app.db import db
-from app.profile_callback_client import callback_profile_result
 from handlers import HandlerRegistry, build_handler_registry
 from company_profile.application.errors import (
     CompanyNotFoundError,
@@ -135,39 +134,31 @@ def build_failure_output(error_msg: str, code: int = 3, version: str = "") -> di
     }
 
 
-def callback_completed_profile(task_id: str, task_data: dict, result: dict):
-    """企业画像成功后回调外部接口；回调失败不影响任务主流程。"""
-    # 当前回调协议只面向企业画像任务，其他 Handler 仍走原有结果队列流程。
-    if task_data.get("task_type") != "profile":
-        return
+def build_result_notification(
+    task_id: str,
+    status: str,
+    worker_id: str,
+    task_data: dict,
+    result: dict | None = None,
+) -> dict:
+    """构造结果通知；业务只提供回调明文，发送协议由 API Gateway 处理。"""
+    message = {
+        "task_id": task_id,
+        "status": status,
+        "worker": worker_id,
+        "callback": task_data.get("callback"),
+    }
+    # 未完成任务（失败），不向回调接口发送信息
+    if status != "completed":
+        message["callback"] = None
+        return message
 
-    callback_url = task_data.get("callback")
-    if not callback_url:
-        logger.info("任务 %s 未提供 callback，跳过企业画像回调", task_id)
-        return
-
-    pdfurl = result.get("data", {}).get("profile", "")
-    if not pdfurl:
-        logger.warning("任务 %s 没有生成 pdfurl，跳过企业画像回调", task_id)
-        return
-
-    # 回调客户端内部吞掉网络/解析异常，这里只根据结果记录任务级日志。
-    callback_result = callback_profile_result(
-        task_id,
-        pdfurl,
-        str(callback_url),
-    )
-    if callback_result.ok:
-        logger.info("任务 %s 企业画像回调成功", task_id)
-    else:
-        logger.warning("任务 %s 企业画像回调失败: %s", task_id, callback_result.error)
-
-
-def result_queue_callback(task_data: dict) -> str | None:
-    """profile 任务由专用加密客户端回调，不再触发 API Gateway 通用回调。"""
-    if task_data.get("task_type") == "profile":
-        return None
-    return task_data.get("callback")
+    pdfurl = ((result or {}).get("data") or {}).get("profile", "")
+    if not message["callback"] or not pdfurl:
+        message["callback"] = None
+        return message
+    message["callback_payload"] = {"task_id": task_id, "pdfurl": pdfurl}
+    return message
 
 
 def pop_limited_task(redis_client, task_queue: str, service_name: str, timezone: str, limit: int):
@@ -212,10 +203,9 @@ def process_job(task_data: dict, handler_registry: HandlerRegistry):
 
     1. 检查任务状态（跳过已完成/失败/取消的任务）
     2. 标记 processing → 执行 handler → 标记 completed/failed
-    3. 推送到 RESULT_QUEUE 触发状态通知；profile 回调由专用加密客户端发送
+    3. 推送到 RESULT_QUEUE，由 API Gateway 发送回调并通知状态
     """
     task_id = task_data["task_id"]
-    gateway_callback = result_queue_callback(task_data)
     start_time = time.time()
 
     # 设置 20 分钟超时
@@ -251,16 +241,16 @@ def process_job(task_data: dict, handler_registry: HandlerRegistry):
         # 通知结果队列
         redis_client.rpush(
             RESULT_QUEUE,
-            json.dumps({
-                "task_id": task_id,
-                "status": "completed",
-                "worker": SERVICE_ID,
-                "callback": gateway_callback,
-            }),
+            json.dumps(
+                build_result_notification(
+                    task_id,
+                    "completed",
+                    SERVICE_ID,
+                    task_data,
+                    result,
+                )
+            ),
         )
-
-        # 企业画像 PDF 地址已写入任务结果后，再通知对方回调接口。
-        callback_completed_profile(task_id, task_data, result)
 
         logger.info("任务 %s 完成，耗时 %.2fs", task_id, elapsed)
 
@@ -275,12 +265,14 @@ def process_job(task_data: dict, handler_registry: HandlerRegistry):
         )
         redis_client.rpush(
             RESULT_QUEUE,
-            json.dumps({
-                "task_id": task_id,
-                "status": "failed",
-                "worker": SERVICE_ID,
-                "callback": gateway_callback,
-            }),
+            json.dumps(
+                build_result_notification(
+                    task_id, 
+                    "failed", 
+                    SERVICE_ID, 
+                    task_data
+                )
+            ),
         )
         logger.error("任务 %s 超时失败", task_id)
 
@@ -295,12 +287,14 @@ def process_job(task_data: dict, handler_registry: HandlerRegistry):
         )
         redis_client.rpush(
             RESULT_QUEUE,
-            json.dumps({
-                "task_id": task_id,
-                "status": "failed",
-                "worker": SERVICE_ID,
-                "callback": gateway_callback,
-            }),
+            json.dumps(
+                build_result_notification(
+                    task_id, 
+                    "failed", 
+                    SERVICE_ID, 
+                    task_data
+                )
+            ),
         )
         logger.error("任务 %s 大模型调用异常: %s", task_id, e)
 
@@ -315,12 +309,14 @@ def process_job(task_data: dict, handler_registry: HandlerRegistry):
         )
         redis_client.rpush(
             RESULT_QUEUE,
-            json.dumps({
-                "task_id": task_id,
-                "status": "failed",
-                "worker": SERVICE_ID,
-                "callback": gateway_callback,
-            }),
+            json.dumps(
+                build_result_notification(
+                    task_id, 
+                    "failed", 
+                    SERVICE_ID, 
+                    task_data
+                )
+            ),
         )
         logger.error("任务 %s 调用失败: %s", task_id, e)
 
@@ -335,12 +331,14 @@ def process_job(task_data: dict, handler_registry: HandlerRegistry):
         )
         redis_client.rpush(
             RESULT_QUEUE,
-            json.dumps({
-                "task_id": task_id,
-                "status": "failed",
-                "worker": SERVICE_ID,
-                "callback": gateway_callback,
-            }),
+            json.dumps(
+                build_result_notification(
+                    task_id, 
+                    "failed", 
+                    SERVICE_ID, 
+                    task_data
+                )
+            ),
         )
         logger.error("任务 %s 失败: %s", task_id, e)
 

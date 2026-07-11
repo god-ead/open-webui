@@ -50,7 +50,6 @@ service/
 ├── main.py                 # Worker 主入口：心跳 + 消费循环 + 任务处理
 ├── app/
 │   ├── db.py               # Database：PostgreSQL 任务状态管理
-│   ├── profile_callback_client.py # 企业画像完成回调客户端
 │   └── export_tasks.py     # 任务数据导出脚本（JSON）
 ├── handlers/
 │   ├── __init__.py          # Handler 包入口
@@ -85,7 +84,7 @@ while running:
     1. 检查任务状态（跳过已完成/失败的）
     2. mark_processing → dispatch Handler → mark_completed/failed
     3. rpush result_queue（API Gateway / WebSocket 状态通知）
-    4. profile 任务成功后直接调用企业画像回调接口
+    4. profile 任务成功后把明文 callback_payload 写入结果队列
 ```
 
 **关键设计：**
@@ -172,7 +171,7 @@ cff50e2f-12fd-44_20260709_215808_0ab8b83e.pdf
 
 ### 6. 企业画像完成回调
 
-profile 任务成功生成 PDF 后，Worker 会直接调用任务请求中的 `callback` 地址。回调最终失败只记录日志，不会把已完成任务改为失败。
+profile 任务成功生成 PDF 后，Worker 将明文回调数据写入结果队列。API Gateway 根据 `CALLBACK_MODE` 加密并调用任务请求中的 `callback` 地址；回调最终失败不会把已完成任务改为失败。
 
 请求 body 明文：
 
@@ -190,10 +189,10 @@ profile 任务成功生成 PDF 后，Worker 会直接调用任务请求中的 `c
 
 | 内容 | 密钥配置 |
 |---|---|
-| body | `PROFILE_CALLBACK_BODY_AES_KEY` / `PROFILE_CALLBACK_BODY_AES_IV` |
-| header `token` | `PROFILE_CALLBACK_TOKEN_AES_KEY` / `PROFILE_CALLBACK_TOKEN_AES_IV` |
+| body | `CALLBACK_BODY_AES_KEY` / `CALLBACK_BODY_AES_IV` |
+| header `token` | `CALLBACK_TOKEN_AES_KEY` / `CALLBACK_TOKEN_AES_IV` |
 
-均使用 AES-128-CBC + PKCS7，输出 Base64。`PROFILE_CALLBACK_TIMEOUT=0` 表示不启用 `requests.post` 客户端超时限制。
+均使用 AES-128-CBC + PKCS7，输出 Base64。`CALLBACK_TIMEOUT=0` 表示不启用 HTTP 客户端超时限制。
 
 对方返回的 `response_body` 使用 BODY KEY/IV 解密。只有 HTTP 状态码为 2xx、响应可解密为合法 JSON 且 `code=0`，才视为回调成功；失败时最多发送 3 次。例如：
 
@@ -205,14 +204,6 @@ response_body=5XN73b6j8DnVfq6dUPNiYHuHyrwAYVXPd+mti8okrJk=
 
 ```json
 {"code":0,"msg":"操作成功"}
-```
-
-排查时可使用：
-
-```bash
-python3 service/decode_callback_response.py \
-  --env-file ../.env \
-  '5XN73b6j8DnVfq6dUPNiYHuHyrwAYVXPd+mti8okrJk='
 ```
 
 ### 7. file_server — PDF HTTP 下载服务
