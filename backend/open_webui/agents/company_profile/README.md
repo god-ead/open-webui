@@ -222,8 +222,8 @@ response_body=5XN73b6j8DnVfq6dUPNiYHuHyrwAYVXPd+mti8okrJk=
 | `CALLBACK_BODY_AES_KEY` / `CALLBACK_BODY_AES_IV` | 回调 body AES key/IV | — |
 | `CALLBACK_TOKEN_AES_KEY` / `CALLBACK_TOKEN_AES_IV` | 回调 token AES key/IV | — |
 | `CALLBACK_SERVER_IP` | token 明文中的本服务 IP | — |
-| `CALLBACK_TIMEOUT` | 回调超时，0 表示不限制 | `0` |
-| `CALLBACK_MAX_ATTEMPTS` | 最多发送次数，包含首次发送 | `3` |
+| `CALLBACK_TIMEOUT` | 回调超时，0 表示不限制 | `30` |
+| `CALLBACK_MAX_RETRIES` | 最大重试次数 | `3` |
 | `CALLBACK_RETRY_DELAY_SECONDS` | 回调失败后的重试间隔基数（秒） | `5` |
 
 完整变量列表见 [.env.example](.env.example)。
