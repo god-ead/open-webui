@@ -222,7 +222,7 @@ response_body=5XN73b6j8DnVfq6dUPNiYHuHyrwAYVXPd+mti8okrJk=
 | 变量 | 说明 | 默认值 |
 |---|---|---|
 | `SERVICE_NAME` | 容器名前缀、调度器定位标识及额度 key 组成部分 | `company-profile` |
-| `COMPOSE_PROJECT_NAME` | Compose 项目隔离名称 | `company-profile` |
+| `COMPOSE_PROJECT_NAME` | Compose 项目名称，用于资源分组 | `company-profile` |
 | `PUBLIC_HOST` | 对外可达 IP/域名，用于下载地址和回调 token | `127.0.0.1`（部署时须修改） |
 | `NGINX_HOST_PORT` | Nginx 对外端口 | `8088` |
 | `DATA_DIR` | PDF、数据库备份和日志的统一宿主机根目录 | `./data` |
