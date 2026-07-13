@@ -65,7 +65,7 @@ services:
       CALLBACK_TOKEN_AES_IV: ${CALLBACK_TOKEN_AES_IV:-}
       CALLBACK_SERVER_IP: ${CALLBACK_SERVER_IP:-}
       CALLBACK_TIMEOUT: ${CALLBACK_TIMEOUT:-30}
-      CALLBACK_MAX_ATTEMPTS: ${CALLBACK_MAX_ATTEMPTS:-3}
+      CALLBACK_MAX_RETRIES: ${CALLBACK_MAX_RETRIES:-3}
       CALLBACK_RETRY_DELAY_SECONDS: ${CALLBACK_RETRY_DELAY_SECONDS:-2}
       CALLBACK_REQUIRED: ${CALLBACK_REQUIRED:-true}
       ALLOWED_TASK_TYPES: ${ALLOWED_TASK_TYPES:-}
@@ -98,48 +98,13 @@ services:
       CALLBACK_TOKEN_AES_IV: ${CALLBACK_TOKEN_AES_IV:-}
       CALLBACK_SERVER_IP: ${CALLBACK_SERVER_IP:-}
       CALLBACK_TIMEOUT: ${CALLBACK_TIMEOUT:-30}
-      CALLBACK_MAX_ATTEMPTS: ${CALLBACK_MAX_ATTEMPTS:-3}
+      CALLBACK_MAX_RETRIES: ${CALLBACK_MAX_RETRIES:-3}
       CALLBACK_RETRY_DELAY_SECONDS: ${CALLBACK_RETRY_DELAY_SECONDS:-2}
       CALLBACK_REQUIRED: ${CALLBACK_REQUIRED:-true}
       ALLOWED_TASK_TYPES: ${ALLOWED_TASK_TYPES:-}
       TZ: Asia/Shanghai
       SERVICE_ID: api-gateway-2
       SERVICE_PORT: "8002"
-    networks:
-      - app_net
-    depends_on:
-      api-gateway-1:
-        condition: service_started
-      redis:
-        condition: service_healthy
-      postgres:
-        condition: service_healthy
-
-  api-gateway-3:
-    image: ${DEPLOY_BASE_REGISTRY:-}${API_GATEWAY_IMAGE:-api-gateway:v0.1.0}
-    container_name: ${SERVICE_NAME:-default_service}-api-3
-    restart: always
-    volumes:
-      - ${LOG_DIR:-.log}:/app/.log
-    environment:
-      REDIS_URL: redis://redis:6379/0
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/appdb
-      TASK_QUEUE: task_queue
-      RESULT_QUEUE: result_queue
-      CALLBACK_MODE: ${CALLBACK_MODE:-json}
-      CALLBACK_BODY_AES_KEY: ${CALLBACK_BODY_AES_KEY:-}
-      CALLBACK_BODY_AES_IV: ${CALLBACK_BODY_AES_IV:-}
-      CALLBACK_TOKEN_AES_KEY: ${CALLBACK_TOKEN_AES_KEY:-}
-      CALLBACK_TOKEN_AES_IV: ${CALLBACK_TOKEN_AES_IV:-}
-      CALLBACK_SERVER_IP: ${CALLBACK_SERVER_IP:-}
-      CALLBACK_TIMEOUT: ${CALLBACK_TIMEOUT:-30}
-      CALLBACK_MAX_ATTEMPTS: ${CALLBACK_MAX_ATTEMPTS:-3}
-      CALLBACK_RETRY_DELAY_SECONDS: ${CALLBACK_RETRY_DELAY_SECONDS:-2}
-      CALLBACK_REQUIRED: ${CALLBACK_REQUIRED:-true}
-      ALLOWED_TASK_TYPES: ${ALLOWED_TASK_TYPES:-}
-      TZ: Asia/Shanghai
-      SERVICE_ID: api-gateway-3
-      SERVICE_PORT: "8003"
     networks:
       - app_net
     depends_on:
@@ -163,7 +128,6 @@ services:
     depends_on:
       - api-gateway-1
       - api-gateway-2
-      - api-gateway-3
 
   scheduler:
     image: ${DEPLOY_BASE_REGISTRY:-}${SCHEDULER_IMAGE:-scheduler:v0.1.0}

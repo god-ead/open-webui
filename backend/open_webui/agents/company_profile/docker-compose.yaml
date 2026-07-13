@@ -45,11 +45,6 @@ services:
       file: docker-compose.infra.yaml
       service: api-gateway-2
 
-  api-gateway-3:
-    extends:
-      file: docker-compose.infra.yaml
-      service: api-gateway-3
-
   nginx:
     extends:
       file: docker-compose.infra.yaml
@@ -59,7 +54,6 @@ services:
     depends_on:
       - api-gateway-1
       - api-gateway-2
-      - api-gateway-3
       - file-server
 
   scheduler:
