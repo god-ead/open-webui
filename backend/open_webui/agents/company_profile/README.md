@@ -50,7 +50,8 @@ company_profile/
 │   │   └── cleanup.py        # 清理逻辑（基于文件 mtime + TTL）
 │   ├── nginx/
 │   │   └── api_upstream.conf # Nginx 反向代理配置
-│   └── verification/         # 集成验证工具
+│   ├── verification/         # 集成验证工具
+│   └── 服务接口与交互规范.md # 任务提交、状态查询与回调协议
 │
 ├── scripts/                  # 批量测试与验证脚本
 ├── scoring_config.yaml       # 评分权重配置文件
@@ -58,7 +59,6 @@ company_profile/
 │
 ├── docker-compose.yaml       # 主编排文件（基础设施 + 业务服务）
 ├── docker-compose.infra.yaml # 通用基础服务模板（postgres、redis、nginx 等）
-├── docker-compose.dev.yaml   # 开发环境叠加文件（本地构建）
 └── .env.example              # 环境变量模板
 ```
 
@@ -81,7 +81,7 @@ company_profile/
 通过 API Gateway 提交任务 → Redis 队列 → Worker 消费 → 生成 PDF → 返回下载链接，并在 profile 任务成功后回调外部接口。
 
 ```
-POST /api/task {"task_type":"profile","input":{"company_name":"..."}}
+POST /api/task {"task_type":"profile","callback":"http://...","input":{"company_name":"..."}}
     ↓ API Gateway（写 DB + 推 Redis 队列）
     ↓ Worker main.py（brpop 消费）
     ↓ CompanyProfileHandler.handle()
@@ -102,7 +102,7 @@ POST /api/task {"task_type":"profile","input":{"company_name":"..."}}
            │             │             │
     ┌──────▼──────┐ ┌───▼───┐ ┌──────▼──────┐
     │ API Gateway │ │ File  │ │   Monitor   │
-    │  ×3 副本     │ │ Server│ │             │
+    │  ×2 副本     │ │ Server│ │             │
     └──────┬──────┘ └───┬───┘ └─────────────┘
            │            │
     ┌──────▼──────┐     │
@@ -124,14 +124,18 @@ POST /api/task {"task_type":"profile","input":{"company_name":"..."}}
 ```bash
 # 1. 配置环境变量
 cp .env.example .env
-# 编辑 .env，填写 LLM_API_KEY 等
+# 编辑 .env，至少设置 PUBLIC_HOST、LLM_API_KEY 和四项 CALLBACK_* AES 密钥/IV
 
-# 2. 生产部署（拉取预构建镜像）
+# 2. 启动（按 .env 中的仓库和版本拉取预构建镜像）
 docker compose -f docker-compose.yaml up -d
 
-# 3. 开发部署（本地构建 + 热更新）
-docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d
+# 3. 查看服务状态
+docker compose -f docker-compose.yaml ps
 ```
+
+默认部署包含 2 个 API Gateway、2 个 Worker，以及单实例的 Nginx、Redis、PostgreSQL、Scheduler、Monitor、Backup、File Server 和 File Cleanup。`DATA_DIR` 统一控制 PDF、备份和日志的宿主机落盘目录；相对路径以 `docker-compose.yaml` 所在目录为基准。
+
+任务提交、状态查询和加密回调的完整报文规范见 [service/服务接口与交互规范.md](service/服务接口与交互规范.md)。
 
 ## 核心流程
 
@@ -162,6 +166,17 @@ report_id: {公司名}_{时间戳}_{8位UUID}
 cff50e2f-12fd-44_20260709_215808_0ab8b83e.pdf
 ```
 
+### PDF 保存与清理时机
+
+异步 profile 任务生成 PDF 时会同步保存两份同名文件：
+
+1. WeasyPrint 先将 PDF 写入临时目录 `PROFILE_PDF_TEMP_DIR`（默认 `${DATA_DIR}/pdf_temp`），供 File Server 对外下载。
+2. 临时文件生成成功后，Worker 立即通过 `copy2` 将其复制到备份目录 `PROFILE_PDF_BACKUP_DIR`（默认 `${DATA_DIR}/pdf_backup`）。
+3. 备份成功后，Worker 才返回下载地址、将任务标记为 `completed`，并由 API Gateway 发送成功回调。
+4. 如果备份失败，Worker 会删除刚生成的临时文件并使任务进入 `failed`，不会发送成功回调。
+
+临时文件和备份文件相互独立清理：临时文件默认保留 24 小时，备份文件默认保留 7 天。`file-cleanup` 每隔 `PROFILE_PDF_CLEANUP_INTERVAL_SECONDS`（默认 3600 秒）扫描一次，因此实际删除时间可能晚于 TTL，最多接近一个扫描周期。
+
 ### 企业画像完成回调
 
 profile 任务成功生成 PDF 后，Worker 将明文回调数据写入结果队列，由 API Gateway 加密并调用任务请求中的 `callback` 地址：
@@ -173,7 +188,7 @@ profile 任务成功生成 PDF 后，Worker 将明文回调数据写入结果队
 
 加密方式为 AES-128-CBC + PKCS7，输出 Base64。`CALLBACK_TIMEOUT=0` 表示不启用 HTTP 客户端超时限制。
 
-对方返回的 `response_body` 使用 BODY KEY/IV 解密。只有 HTTP 状态码为 2xx、响应可解密为合法 JSON 且 `code=0`，才视为回调成功；失败时最多发送 3 次。例如：
+对方返回的 `response_body` 使用 BODY KEY/IV 解密。只有 HTTP 状态码为 2xx、响应可解密为合法 JSON 且 `code=0`，才视为回调成功。例如：
 
 ```text
 response_body=5XN73b6j8DnVfq6dUPNiYHuHyrwAYVXPd+mti8okrJk=
@@ -206,6 +221,11 @@ response_body=5XN73b6j8DnVfq6dUPNiYHuHyrwAYVXPd+mti8okrJk=
 
 | 变量 | 说明 | 默认值 |
 |---|---|---|
+| `SERVICE_NAME` | 容器名前缀、调度器定位标识及额度 key 组成部分 | `company-profile` |
+| `COMPOSE_PROJECT_NAME` | Compose 项目隔离名称 | `company-profile` |
+| `PUBLIC_HOST` | 对外可达 IP/域名，用于下载地址和回调 token | `127.0.0.1`（部署时须修改） |
+| `NGINX_HOST_PORT` | Nginx 对外端口 | `8088` |
+| `DATA_DIR` | PDF、数据库备份和日志的统一宿主机根目录 | `./data` |
 | `LLM_API_KEY` | LLM API 密钥 | — |
 | `LLM_BASE_URL` | LLM API 地址 | `https://dashscope.aliyuncs.com/...` |
 | `LLM_MODEL` | LLM 模型 | `qwen3.5-plus` |
@@ -213,11 +233,16 @@ response_body=5XN73b6j8DnVfq6dUPNiYHuHyrwAYVXPd+mti8okrJk=
 | `REDIS_URL` | Redis 连接串 | `redis://redis:6379/0` |
 | `DATABASE_URL` | PostgreSQL 连接串 | `postgresql://...` |
 | `HANDLER_MODULES` | Handler 注册列表 | `handlers.company_profile:CompanyProfileHandler` |
+| `ALLOWED_TASK_TYPES` | API Gateway 接受的任务类型 | `profile` |
+| `CALLBACK_REQUIRED` | 提交任务时是否强制要求 callback | `true` |
 | `DAILY_VISIT_LIMIT` | 每日访问次数限额，0/空表示不限 | `200` |
 | `DAILY_VISIT_LIMIT_SLEEP_SECONDS` | 额度不足后二阶段检查间隔（秒） | `300` |
 | `PROFILE_PDF_DOWNLOAD_BASE_URL` | PDF 下载基础 URL | `http://127.0.0.1:8088/api/download` |
 | `PROFILE_PDF_TEMP_TTL_HOURS` | PDF 临时文件保留（小时） | `24` |
 | `PROFILE_PDF_BACKUP_TTL_DAYS` | PDF 备份保留（天） | `7` |
+| `PROFILE_PDF_CLEANUP_INTERVAL_SECONDS` | PDF 清理扫描间隔（秒） | `3600` |
+| `PROFILE_PDF_TEMP_DIR` / `PROFILE_PDF_BACKUP_DIR` | PDF 宿主机目录 | `${DATA_DIR}/pdf_temp` / `${DATA_DIR}/pdf_backup` |
+| `BACKUP_DIR` / `LOG_DIR` | 数据库备份与共享日志目录 | `${DATA_DIR}/backups` / `${DATA_DIR}/.log` |
 | `CALLBACK_MODE` | API Gateway 回调模式，企业画像使用 `aes_cbc` | `aes_cbc` |
 | `CALLBACK_BODY_AES_KEY` / `CALLBACK_BODY_AES_IV` | 回调 body AES key/IV | — |
 | `CALLBACK_TOKEN_AES_KEY` / `CALLBACK_TOKEN_AES_IV` | 回调 token AES key/IV | — |
@@ -234,4 +259,4 @@ response_body=5XN73b6j8DnVfq6dUPNiYHuHyrwAYVXPd+mti8okrJk=
 - **PDF**: WeasyPrint（HTML → PDF 渲染，需系统字体支持）
 - **任务队列**: Redis（BRPOP 阻塞消费）
 - **数据库**: PostgreSQL（任务状态持久化）
-- **部署**: Docker Compose（nginx 反向代理 + 多副本网关 + Worker 集群）
+- **部署**: Docker Compose（nginx 反向代理 + 双副本网关 + Worker 集群）

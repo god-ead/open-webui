@@ -7,13 +7,13 @@
 ```
                     Nginx:8088
                          │
-    ┌────────────────────┼────────────────────┐
-    │                    │                    │
-    ▼                    ▼                    ▼
-api-gateway-1       api-gateway-2       api-gateway-3
-(8001)              (8002)              (8003)
-    │                    │                    │
-    └────────────────────┼────────────────────┘
+              ┌──────────┴──────────┐
+              │                     │
+              ▼                     ▼
+       api-gateway-1          api-gateway-2
+       (8001)                 (8002)
+              │                     │
+              └──────────┬──────────┘
                          │ 推入任务 / 查询状态
                          ▼
     ┌─────────────────────────────────────────┐
@@ -152,8 +152,21 @@ AnalysisResult
   → ReportGenerator.generate_pdf() (WeasyPrint 渲染)
   → 写入 temp_dir (临时目录)
   → copy2 到 backup_dir (备份)
+  → 备份成功
   → 返回 download_base_url/{file_name}
+  → Worker 将任务标记为 completed
 ```
+
+PDF 不是在任务完成后异步备份，而是在 `ProfilePdfExporter.export()` 返回前同步备份。具体顺序如下：
+
+| 顺序 | 动作 | 目录/结果 |
+|---|---|---|
+| 1 | WeasyPrint 生成 PDF | `PROFILE_PDF_TEMP_DIR`，默认 `${DATA_DIR}/pdf_temp` |
+| 2 | Worker 立即执行 `copy2` | `PROFILE_PDF_BACKUP_DIR`，默认 `${DATA_DIR}/pdf_backup` |
+| 3 | 备份成功 | 返回下载地址，随后任务标记为 `completed` |
+| 4 | 备份失败 | 删除临时 PDF、抛出异常，任务标记为 `failed` |
+
+因此，数据库中的任务状态变为 `completed` 时，临时目录和备份目录中应当已经各有一份同名 PDF。成功回调发生在任务完成通知进入 `result_queue` 之后，也晚于备份写入。
 
 文件名 `_file_name()` 会过滤路径遍历字符。任务中带 `task_id` 时，为避免公开 URL 暴露中文公司名，文件名格式为：
 
@@ -166,8 +179,6 @@ AnalysisResult
 ```
 cff50e2f-12fd-44_20260709_215808_0ab8b83e.pdf
 ```
-
-备份失败时自动回滚（删除临时文件）再抛出异常。
 
 ### 6. 企业画像完成回调
 
@@ -194,7 +205,7 @@ profile 任务成功生成 PDF 后，Worker 将明文回调数据写入结果队
 
 均使用 AES-128-CBC + PKCS7，输出 Base64。`CALLBACK_TIMEOUT=0` 表示不启用 HTTP 客户端超时限制。
 
-对方返回的 `response_body` 使用 BODY KEY/IV 解密。只有 HTTP 状态码为 2xx、响应可解密为合法 JSON 且 `code=0`，才视为回调成功；失败时最多发送 3 次。例如：
+对方返回的 `response_body` 使用 BODY KEY/IV 解密。只有 HTTP 状态码为 2xx、响应可解密为合法 JSON 且 `code=0`，才视为回调成功。`CALLBACK_MAX_RETRIES=3`、`CALLBACK_RETRY_DELAY_SECONDS=5` 时，重试前依次等待 5、10、15 秒。例如：
 
 ```text
 response_body=5XN73b6j8DnVfq6dUPNiYHuHyrwAYVXPd+mti8okrJk=
@@ -206,9 +217,11 @@ response_body=5XN73b6j8DnVfq6dUPNiYHuHyrwAYVXPd+mti8okrJk=
 {"code":0,"msg":"操作成功"}
 ```
 
+完整的任务提交、状态查询、错误响应和回调报文约定见 [服务接口与交互规范.md](服务接口与交互规范.md)。
+
 ### 7. file_server — PDF HTTP 下载服务
 
-基于 FastAPI 的独立服务，挂载 `profile_pdf_temp` 卷（只读），提供安全的 PDF 下载。
+基于 FastAPI 的独立服务，将 `${PROFILE_PDF_TEMP_DIR}` 挂载到容器内 `/app/data/pdf-temp`（只读），提供安全的 PDF 下载。
 
 **三层安全校验：**
 1. 仅允许 `.pdf` 后缀的纯文件名（防目录遍历）
@@ -231,10 +244,12 @@ response_body=5XN73b6j8DnVfq6dUPNiYHuHyrwAYVXPd+mti8okrJk=
 | 备份目录 | 7 天 | `PROFILE_PDF_BACKUP_TTL_DAYS` |
 | 清理间隔 | 3600 秒 | `PROFILE_PDF_CLEANUP_INTERVAL_SECONDS` |
 
+`file-cleanup` 基于文件 `st_mtime` 判断是否超过 TTL。扫描是周期执行的，因此文件达到 TTL 后不会立刻删除，而是在下一次扫描时删除；实际保留时间最多可能比配置的 TTL 多接近一个清理间隔。
+
 ### 9. nginx — 反向代理
 
 [api_upstream.conf](nginx/api_upstream.conf) 配置：
-- `/api/*` → `api_backend`（3 个 API Gateway，least_conn 负载均衡）
+- `/api/*` → `api_backend`（2 个 API Gateway，least_conn 负载均衡）
 - `/api/download/*` → `file-server:8010`（PDF 下载直连）
 - `/ws/*` → `api_backend`（WebSocket 长连接，3600s 超时）
 - `/monitor/*` → `monitor:8089`（监控面板）
@@ -245,7 +260,7 @@ response_body=5XN73b6j8DnVfq6dUPNiYHuHyrwAYVXPd+mti8okrJk=
 ### 镜像构建
 
 ```bash
-docker build -f service/Dockerfile -t company-profile-service:v0.1.0 .
+docker build -f service/Dockerfile -t company-profile-service:v0.1.9 .
 ```
 
 镜像包含：Python 3.11 + 中文字体（Noto CJK）+ 业务依赖 + 核心代码。
@@ -263,7 +278,7 @@ docker build -f service/Dockerfile -t company-profile-service:v0.1.0 .
 ## 任务生命周期
 
 ```
-1. POST /api/task {"task_type":"profile","input":{"company_name":"..."}}
+1. POST /api/task {"task_type":"profile","callback":"http://...","input":{"company_name":"..."}}
    ├── API Gateway 生成 UUID → INSERT tasks (status=queued)
    └── RPUSH task_queue
 
@@ -273,9 +288,12 @@ docker build -f service/Dockerfile -t company-profile-service:v0.1.0 .
    └── UPDATE tasks (status=completed, output=...)
 
 3. Worker 写入完成结果
-   ├── RPUSH result_queue（API Gateway / WebSocket 状态通知）
-   ├── profile 任务成功后调用企业画像回调接口
-   └── 超时/失败 → SCHEDULER 检测心跳 → 重新分配
+   ├── RPUSH result_queue（状态通知 + 明文 callback_payload）
+   ├── API Gateway 消费结果并向 WebSocket 推送状态
+   └── profile 成功时由 API Gateway 加密并调用 callback 地址
+
+4. Worker 失联或任务超时
+   └── Scheduler 根据心跳和任务状态检测异常并执行恢复处理
 ```
 
 ## 扩容
@@ -284,18 +302,13 @@ Worker 是**无状态**的（配置来自环境变量，任务来自 Redis），
 
 ## 日志
 
-所有业务服务（`main.py`、`file_cleanup`、`export_tasks`）通过 `service/common/logging_config.py` 统一配置日志（从 `deploy-base/common/` 拷贝，Dockerfile 通过 `COPY service/common/ common/` 纳入镜像）：
+业务服务（`main.py`、`file_cleanup`、`export_tasks`）通过 `service/common/logging_config.py` 统一配置日志（Dockerfile 通过 `COPY service/common/ common/` 纳入镜像）：
 
-- 写入同一文件 `.log/service.log`，通过 `[company_profile.worker]`、`[company_profile.file_cleanup]` 区分来源
-- 单文件上限 **5 MB**，自动轮转，最多保留 **10** 个归档
+- 写入 `.log/service-deploy.log`，通过 logger 名称区分来源
+- 单文件上限 **5 MB**，自动轮转，最多保留 **5** 个归档
 - 同时输出到控制台
 - 入口调用：`from common.logging_config import setup_logging; setup_logging()`
 
 `file-server` 由 uvicorn 管理日志，输出到 stdout。
 
-各容器独立文件系统，日志不跨容器共享。持久化日志到宿主机可在 `docker-compose.yaml` 中挂载卷：
-
-```yaml
-volumes:
-  - ./logs:/app/.log
-```
+当前 Compose 已将 `${LOG_DIR}` 挂载到 Worker、API Gateway、Scheduler 和 Monitor 的 `/app/.log`，默认落盘到 `${DATA_DIR}/.log`。如需迁移全部持久化文件，只需修改 `.env` 中的 `DATA_DIR`；也可以单独覆盖 `LOG_DIR`、`BACKUP_DIR`、`PROFILE_PDF_TEMP_DIR` 和 `PROFILE_PDF_BACKUP_DIR`。
