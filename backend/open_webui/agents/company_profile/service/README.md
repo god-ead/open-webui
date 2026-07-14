@@ -248,7 +248,7 @@ response_body=5XN73b6j8DnVfq6dUPNiYHuHyrwAYVXPd+mti8okrJk=
 
 ### 9. nginx — 反向代理
 
-[api_upstream.conf](nginx/api_upstream.conf) 配置：
+运行时 Nginx 配置通过 `docker-compose.yaml` 的 `configs.nginx_api_upstream.content` 内联并挂载到 `/etc/nginx/conf.d/api_upstream.conf`。路由包括：
 - `/api/*` → `api_backend`（2 个 API Gateway，least_conn 负载均衡）
 - `/api/download/*` → `file-server:8010`（PDF 下载直连）
 - `/ws/*` → `api_backend`（WebSocket 长连接，3600s 超时）

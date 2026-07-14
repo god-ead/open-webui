@@ -48,8 +48,6 @@ company_profile/
 │   ├── file_cleanup/         # 过期 PDF 清理服务
 │   │   ├── main.py           # 清理入口（定时循环）
 │   │   └── cleanup.py        # 清理逻辑（基于文件 mtime + TTL）
-│   ├── nginx/
-│   │   └── api_upstream.conf # Nginx 反向代理配置
 │   ├── verification/         # 集成验证工具
 │   └── 服务接口与交互规范.md # 任务提交、状态查询与回调协议
 │
@@ -134,6 +132,8 @@ docker compose -f docker-compose.yaml ps
 ```
 
 默认部署包含 2 个 API Gateway、2 个 Worker，以及单实例的 Nginx、Redis、PostgreSQL、Scheduler、Monitor、Backup、File Server 和 File Cleanup。`DATA_DIR` 统一控制 PDF、备份和日志的宿主机落盘目录；相对路径以 `docker-compose.yaml` 所在目录为基准。
+
+最小部署只需 `.env`、`docker-compose.yaml` 和 `docker-compose.infra.yaml`。企业画像专用 Nginx 路由通过 `configs.nginx_api_upstream.content` 内联在 `docker-compose.yaml` 中。内联 config 需要 Docker Compose 2.23.1 或更高版本。
 
 任务提交、状态查询和加密回调的完整报文规范见 [service/服务接口与交互规范.md](service/服务接口与交互规范.md)。
 
