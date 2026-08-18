@@ -192,7 +192,19 @@ services:
     healthcheck:
       <<: *healthcheck-service
       # 检查 Redis 中本 SERVICE_ID 心跳时间＜15s
-      test: ["CMD", "python", "-c", "import os, time, redis; key = 'service:' + os.environ['SERVICE_ID']; value = redis.from_url(os.environ['REDIS_URL']).hget(key, 'last_heartbeat'); raise SystemExit(0 if value and time.time() - float(value) < 15 else 1)"]
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import os, time, redis;
+          key = 'service:' + os.environ['SERVICE_ID'];
+          value = redis.from_url(os.environ['REDIS_URL']).hget(
+          key, 'last_heartbeat'
+          );
+          raise SystemExit(
+          0 if value and time.time() - float(value) < 15 else 1
+          )
 
   service-2:
     image: ${COMPANY_PROFILE_REGISTRY:-}${SERVICE_IMAGE:-company-profile-service:v0.1.0}
@@ -216,7 +228,19 @@ services:
     healthcheck:
       <<: *healthcheck-service
       # 检查 Redis 中本 SERVICE_ID 心跳时间＜15s
-      test: ["CMD", "python", "-c", "import os, time, redis; key = 'service:' + os.environ['SERVICE_ID']; value = redis.from_url(os.environ['REDIS_URL']).hget(key, 'last_heartbeat'); raise SystemExit(0 if value and time.time() - float(value) < 15 else 1)"]
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import os, time, redis;
+          key = 'service:' + os.environ['SERVICE_ID'];
+          value = redis.from_url(os.environ['REDIS_URL']).hget(
+          key, 'last_heartbeat'
+          );
+          raise SystemExit(
+          0 if value and time.time() - float(value) < 15 else 1
+          )
 
   file-server:
     image: ${COMPANY_PROFILE_REGISTRY:-}${SERVICE_IMAGE:-company-profile-service:v0.1.0}
@@ -232,7 +256,15 @@ services:
       - app_net
     healthcheck:
       <<: *healthcheck-service
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/health', timeout=3)"]
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen(
+          'http://127.0.0.1:8010/health', timeout=3
+          )
 
   file-cleanup:
     image: ${COMPANY_PROFILE_REGISTRY:-}${SERVICE_IMAGE:-company-profile-service:v0.1.0}
@@ -251,4 +283,13 @@ services:
     healthcheck:
       <<: *healthcheck-service
       # 检查 PID1 是预期程序 file_cleanup.main
-      test: ["CMD", "python", "-c", "from pathlib import Path; raise SystemExit(0 if b'file_cleanup.main' in Path('/proc/1/cmdline').read_bytes() else 1)"]
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          from pathlib import Path;
+          raise SystemExit(
+          0 if b'file_cleanup.main' in
+          Path('/proc/1/cmdline').read_bytes() else 1
+          )

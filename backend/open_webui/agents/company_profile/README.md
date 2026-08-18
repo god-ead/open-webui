@@ -208,14 +208,16 @@ response_body=5XN73b6j8DnVfq6dUPNiYHuHyrwAYVXPd+mti8okrJk=
 - 正整数表示每日最多处理 N 个任务
 - 额度 Redis key 按日期区分：`quota:used:{SERVICE_NAME}:{YYYY-MM-DD}`
 
-额度不足时任务会放回队列，并进入两阶段睡眠：
+额度不足时任务会放回队列，并进入两阶段等待：
 
 | 阶段 | 策略 | 日志 |
 |---|---|---|
-| 一阶段 | `10s * 2^n`，直到达到 `DAILY_VISIT_LIMIT_SLEEP_SECONDS` | 每次打印 |
-| 二阶段 | 固定 `DAILY_VISIT_LIMIT_SLEEP_SECONDS`，默认 300s | Redis 抢锁后每小时最多打印一次 |
+| 一阶段 | 最长等待 `10s * 2^n`，直到达到 `DAILY_VISIT_LIMIT_SLEEP_SECONDS` | 每次打印 |
+| 二阶段 | 最长等待 `DAILY_VISIT_LIMIT_SLEEP_SECONDS`，默认 300s | Redis 抢锁后每小时最多打印一次 |
 
-二阶段日志锁只影响“额度不足导致的 sleep 提示”，其他日志不受影响。
+监控页面手动重置额度时，Redis Pub/Sub 会立即唤醒等待中的 Worker。到达 `Asia/Shanghai` 零点时，Worker 也会结束当前等待并使用新日期的额度键重试。
+
+二阶段日志锁只影响“额度不足导致的等待提示”，其他日志不受影响。
 
 ## 环境变量
 

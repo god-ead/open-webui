@@ -107,20 +107,22 @@ while running:
 quota:used:{SERVICE_NAME}:{YYYY-MM-DD}
 ```
 
-Worker 获取到任务后才尝试扣额度。额度不足时任务会放回队列，并进入两阶段睡眠：
+Worker 获取到任务后才尝试扣额度。额度不足时任务会放回队列，并进入两阶段等待：
 
 | 阶段 | 策略 | 日志 |
 |---|---|---|
-| 一阶段 | `10s * 2^n`，直到达到 `DAILY_VISIT_LIMIT_SLEEP_SECONDS` | 每次打印 |
-| 二阶段 | 固定 `DAILY_VISIT_LIMIT_SLEEP_SECONDS`，默认 300s | Redis 抢锁后每小时最多打印一次 |
+| 一阶段 | 最长等待 `10s * 2^n`，直到达到 `DAILY_VISIT_LIMIT_SLEEP_SECONDS` | 每次打印 |
+| 二阶段 | 最长等待 `DAILY_VISIT_LIMIT_SLEEP_SECONDS`，默认 300s | Redis 抢锁后每小时最多打印一次 |
 
-二阶段日志锁只影响“额度不足导致的 sleep 提示”，不影响其他日志：
+监控页面手动重置额度时，Redis Pub/Sub 会立即唤醒等待中的 Worker。到达 `Asia/Shanghai` 零点时，Worker 也会结束当前等待并使用新日期的额度键重试。
+
+二阶段日志锁只影响“额度不足导致的等待提示”，不影响其他日志：
 
 ```
 quota:limit_sleep_log:{SERVICE_NAME}:stage2
 ```
 
-一旦成功扣到额度并开始处理任务，本 Worker 的睡眠计数会重置为 0。
+一旦成功扣到额度并开始处理任务，本 Worker 的等待计数会重置为 0。
 
 ### 3. HandlerRegistry — 插件式 Handler 路由
 

@@ -4,8 +4,8 @@
 
 x-healthcheck-infra: &healthcheck-infra
   interval: 10s
-  timeout: 3s
-  retries: 5
+  timeout: 5s
+  retries: 3
   start_period: 30s
 
 networks:
@@ -83,7 +83,14 @@ services:
         condition: service_healthy
     healthcheck:
       <<: *healthcheck-infra
-      test: ["CMD", "curl", "--fail", "--silent", "--output", "/dev/null", "http://127.0.0.1:8001/health"]
+      test:
+        - CMD
+        - curl
+        - --fail
+        - --silent
+        - --output
+        - /dev/null
+        - http://127.0.0.1:8001/health
 
   api-gateway-2:
     image: ${DEPLOY_BASE_REGISTRY:-}${API_GATEWAY_IMAGE:-api-gateway:v0.1.0}
@@ -119,7 +126,14 @@ services:
         condition: service_healthy
     healthcheck:
       <<: *healthcheck-infra
-      test: ["CMD", "curl", "--fail", "--silent", "--output", "/dev/null", "http://127.0.0.1:8002/health"]
+      test:
+        - CMD
+        - curl
+        - --fail
+        - --silent
+        - --output
+        - /dev/null
+        - http://127.0.0.1:8002/health
 
   nginx:
     image: ${DEPLOY_BASE_REGISTRY:-}${NGINX_IMAGE:-nginx:v0.1.0}
@@ -138,7 +152,12 @@ services:
         condition: service_healthy
     healthcheck:
       <<: *healthcheck-infra
-      test: ["CMD", "curl", "--fail", "--silent", "--output", "/dev/null", "http://127.0.0.1/health"]
+      test:
+        - CMD
+        - wget
+        - -q
+        - --spider
+        - http://127.0.0.1/health
 
   scheduler:
     image: ${DEPLOY_BASE_REGISTRY:-}${SCHEDULER_IMAGE:-scheduler:v0.1.0}
@@ -167,7 +186,18 @@ services:
     healthcheck:
       <<: *healthcheck-infra
       # 检查 Redis 与 PostgreSQL 数据库能否连接
-      test: ["CMD", "python", "-c", "import os, redis, psycopg2; redis.from_url(os.environ['REDIS_URL']).ping(); psycopg2.connect(os.environ['DATABASE_URL'], connect_timeout=3).close()"]
+      timeout: 5s
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import os, redis, psycopg2;
+          r = redis.from_url(os.environ['REDIS_URL'],
+          socket_connect_timeout=1, socket_timeout=1);
+          r.ping();
+          psycopg2.connect(os.environ['DATABASE_URL'],
+          connect_timeout=2).close()
 
   monitor:
     image: ${DEPLOY_BASE_REGISTRY:-}${MONITOR_IMAGE:-monitor:v0.1.0}
@@ -191,8 +221,16 @@ services:
         condition: service_healthy
     healthcheck:
       <<: *healthcheck-infra
-      # 检查 /api/stats 和 /api/queues 是否可请求
-      test: ["CMD", "python", "-c", "import urllib.request; [urllib.request.urlopen('http://127.0.0.1:8089' + path, timeout=3) for path in ('/api/stats', '/api/queues')]"]
+      # 检查 Monitor 服务及其 Redis、PostgreSQL 连接
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen(
+          'http://127.0.0.1:8089/health', timeout=2
+          ).close()
 
   backup:
     image: ${DEPLOY_BASE_REGISTRY:-}${BACKUP_IMAGE:-db-backup:v0.1.0}

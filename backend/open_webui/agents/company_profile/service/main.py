@@ -18,6 +18,8 @@ from company_profile.application.errors import (
     LLMServiceError,
 )
 from common.quota import (
+    WAKE_TIMEOUT,
+    QuotaWaiter,
     parse_quota_limit,
     quota_key,
     reserve_slot,
@@ -177,7 +179,7 @@ def pop_limited_task(redis_client, task_queue: str, service_name: str, timezone:
 
 
 def quota_limit_sleep_plan(attempts: int) -> tuple[int, str]:
-    """额度不足时的两阶段睡眠策略：先指数退避，再固定间隔检查。"""
+    """额度不足时的两阶段等待策略：先指数退避，再固定间隔检查。"""
     stage1_sleep = QUOTA_LIMIT_STAGE1_BASE_SECONDS * (2 ** min(attempts, 16))
     if stage1_sleep < DAILY_VISIT_LIMIT_SLEEP_SECONDS:
         return stage1_sleep, "stage1"
@@ -185,7 +187,7 @@ def quota_limit_sleep_plan(attempts: int) -> tuple[int, str]:
 
 
 def should_log_quota_sleep(redis_client, service_name: str, stage: str) -> bool:
-    """只对二阶段额度睡眠提示做 Redis 抢锁，其他日志不受影响。"""
+    """只对二阶段额度等待提示做 Redis 抢锁，其他日志不受影响。"""
     if stage != "stage2":
         return True
 
@@ -370,6 +372,11 @@ def main():
     logger.info("开始消费队列: %s", TASK_QUEUE)
     logger.info("每日访问限额：%s", "不限" if unlimited else f"{limit} 次")
     write_quota_meta(redis_client, SERVICE_NAME, limit, unlimited, quota_err, QUOTA_TIMEZONE)
+    quota_waiter = None if unlimited else QuotaWaiter(
+        redis_client,
+        SERVICE_NAME,
+        QUOTA_TIMEZONE,
+    )
 
     # 启动独立心跳线程（不受任务阻塞影响）
     hb_thread = threading.Thread(target=heartbeat_loop, daemon=True)
@@ -399,11 +406,15 @@ def main():
                 sleep_seconds, sleep_stage = quota_limit_sleep_plan(quota_limit_attempts)
                 if should_log_quota_sleep(redis_client, SERVICE_NAME, sleep_stage):
                     logger.info(
-                        "每日访问额度已用尽，任务已放回队列，%s 秒后重试",
+                        "每日访问额度已用尽，任务已放回队列，最长等待 %s 秒",
                         sleep_seconds,
                     )
-                time.sleep(sleep_seconds)
-                quota_limit_attempts += 1
+                wake_reason = quota_waiter.wait(sleep_seconds)
+                if wake_reason == WAKE_TIMEOUT:
+                    quota_limit_attempts += 1
+                else:
+                    quota_limit_attempts = 0
+                    logger.info("额度已刷新，立即重试：%s", wake_reason)
                 continue
             if not task_data:
                 continue
@@ -420,6 +431,8 @@ def main():
     # 退出
     unregister_service()
     db.close()
+    if quota_waiter is not None:
+        quota_waiter.close()
     redis_client.close()
     logger.info("服务已退出")
 
