@@ -107,20 +107,22 @@ while running:
 quota:used:{SERVICE_NAME}:{YYYY-MM-DD}
 ```
 
-Worker 获取到任务后才尝试扣额度。额度不足时任务会放回队列，并进入两阶段睡眠：
+Worker 获取到任务后才尝试扣额度。额度不足时任务会放回队列，并进入两阶段等待：
 
 | 阶段 | 策略 | 日志 |
 |---|---|---|
-| 一阶段 | `10s * 2^n`，直到达到 `DAILY_VISIT_LIMIT_SLEEP_SECONDS` | 每次打印 |
-| 二阶段 | 固定 `DAILY_VISIT_LIMIT_SLEEP_SECONDS`，默认 300s | Redis 抢锁后每小时最多打印一次 |
+| 一阶段 | 最长等待 `10s * 2^n`，直到达到 `DAILY_VISIT_LIMIT_SLEEP_SECONDS` | 每次打印 |
+| 二阶段 | 最长等待 `DAILY_VISIT_LIMIT_SLEEP_SECONDS`，默认 300s | Redis 抢锁后每小时最多打印一次 |
 
-二阶段日志锁只影响“额度不足导致的 sleep 提示”，不影响其他日志：
+监控页面手动重置额度时，Redis Pub/Sub 会立即唤醒等待中的 Worker。到达 `Asia/Shanghai` 零点时，Worker 也会结束当前等待并使用新日期的额度键重试。
+
+二阶段日志锁只影响“额度不足导致的等待提示”，不影响其他日志：
 
 ```
 quota:limit_sleep_log:{SERVICE_NAME}:stage2
 ```
 
-一旦成功扣到额度并开始处理任务，本 Worker 的睡眠计数会重置为 0。
+一旦成功扣到额度并开始处理任务，本 Worker 的等待计数会重置为 0。
 
 ### 3. HandlerRegistry — 插件式 Handler 路由
 
@@ -236,13 +238,13 @@ response_body=5XN73b6j8DnVfq6dUPNiYHuHyrwAYVXPd+mti8okrJk=
 
 ### 8. file_cleanup — 过期文件清理
 
-定时循环执行，基于文件 `st_mtime` 判断过期：
+每天在 `Asia/Shanghai` 的指定整点执行，基于文件 `st_mtime` 和精确 TTL 判断过期：
 
-| 目录 | TTL 默认值 | 环境变量 |
+| 配置项 | 默认值 | 环境变量 |
 |---|---|---|
 | 临时目录 | 24 小时 | `PROFILE_PDF_TEMP_TTL_HOURS` |
 | 备份目录 | 7 天 | `PROFILE_PDF_BACKUP_TTL_DAYS` |
-| 清理间隔 | 3600 秒 | `PROFILE_PDF_CLEANUP_INTERVAL_SECONDS` |
+| 清理小时 | 2（02:00） | `PROFILE_PDF_CLEANUP_HOUR` |
 
 `file-cleanup` 基于文件 `st_mtime` 判断是否超过 TTL。扫描是周期执行的，因此文件达到 TTL 后不会立刻删除，而是在下一次扫描时删除；实际保留时间最多可能比配置的 TTL 多接近一个清理间隔。
 
