@@ -2,6 +2,12 @@
 # 这里只维护可复用的基础服务：postgres、redis、api-gateway、nginx、scheduler、monitor、backup。
 # 业务服务、业务路由覆盖、业务文件存储等内容由 docker-compose.yaml 继承并覆盖。
 
+x-healthcheck-infra: &healthcheck-infra
+  interval: 10s
+  timeout: 3s
+  retries: 5
+  start_period: 30s
+
 networks:
   app_net:
     driver: bridge
@@ -26,10 +32,8 @@ services:
     networks:
       - app_net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
+      <<: *healthcheck-infra
+      test: ["CMD", "pg_isready", "-U", "postgres"]
 
   redis:
     image: ${DEPLOY_BASE_REGISTRY:-}${REDIS_IMAGE:-redis:v0.1.0}
@@ -42,10 +46,8 @@ services:
     networks:
       - app_net
     healthcheck:
+      <<: *healthcheck-infra
       test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
 
   api-gateway-1:
     image: ${DEPLOY_BASE_REGISTRY:-}${API_GATEWAY_IMAGE:-api-gateway:v0.1.0}
@@ -71,6 +73,9 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-infra
+      test: ["CMD", "curl", "--fail", "--silent", "--output", "/dev/null", "http://127.0.0.1:8001/health"]
 
   api-gateway-2:
     image: ${DEPLOY_BASE_REGISTRY:-}${API_GATEWAY_IMAGE:-api-gateway:v0.1.0}
@@ -92,12 +97,13 @@ services:
     networks:
       - app_net
     depends_on:
-      api-gateway-1:
-        condition: service_started
       redis:
         condition: service_healthy
       postgres:
         condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-infra
+      test: ["CMD", "curl", "--fail", "--silent", "--output", "/dev/null", "http://127.0.0.1:8002/health"]
 
   api-gateway-3:
     image: ${DEPLOY_BASE_REGISTRY:-}${API_GATEWAY_IMAGE:-api-gateway:v0.1.0}
@@ -119,12 +125,13 @@ services:
     networks:
       - app_net
     depends_on:
-      api-gateway-1:
-        condition: service_started
       redis:
         condition: service_healthy
       postgres:
         condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-infra
+      test: ["CMD", "curl", "--fail", "--silent", "--output", "/dev/null", "http://127.0.0.1:8003/health"]
 
   nginx:
     image: ${DEPLOY_BASE_REGISTRY:-}${NGINX_IMAGE:-nginx:v0.1.0}
@@ -137,9 +144,15 @@ services:
     networks:
       - app_net
     depends_on:
-      - api-gateway-1
-      - api-gateway-2
-      - api-gateway-3
+      api-gateway-1:
+        condition: service_healthy
+      api-gateway-2:
+        condition: service_healthy
+      api-gateway-3:
+        condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-infra
+      test: ["CMD", "curl", "--fail", "--silent", "--output", "/dev/null", "http://127.0.0.1/health"]
 
   scheduler:
     image: ${DEPLOY_BASE_REGISTRY:-}${SCHEDULER_IMAGE:-scheduler:v0.1.0}
@@ -165,6 +178,10 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-infra
+      # 检查 Redis 与 PostgreSQL 数据库能否连接
+      test: ["CMD", "python", "-c", "import os, redis, psycopg2; redis.from_url(os.environ['REDIS_URL']).ping(); psycopg2.connect(os.environ['DATABASE_URL'], connect_timeout=3).close()"]
 
   monitor:
     image: ${DEPLOY_BASE_REGISTRY:-}${MONITOR_IMAGE:-monitor:v0.1.0}
@@ -186,6 +203,10 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-infra
+      # 检查 /api/stats 和 /api/queues 是否可请求
+      test: ["CMD", "python", "-c", "import urllib.request; [urllib.request.urlopen('http://127.0.0.1:8089' + path, timeout=3) for path in ('/api/stats', '/api/queues')]"]
 
   backup:
     image: ${DEPLOY_BASE_REGISTRY:-}${BACKUP_IMAGE:-db-backup:v0.1.0}
@@ -205,3 +226,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-infra
+      # 检查 crond 是否正在运行
+      test: ["CMD-SHELL", "pgrep -x crond >/dev/null"]

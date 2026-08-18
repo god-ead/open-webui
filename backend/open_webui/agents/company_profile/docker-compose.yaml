@@ -1,3 +1,9 @@
+x-healthcheck-service: &healthcheck-service
+  interval: 10s
+  timeout: 5s
+  retries: 3
+  start_period: 30s
+
 x-worker-env: &worker-env
   REDIS_URL: redis://redis:6379/0
   DATABASE_URL: postgresql://postgres:postgres@postgres:5432/appdb
@@ -55,10 +61,14 @@ services:
     volumes:
       - ./service/nginx/api_upstream.conf:/etc/nginx/conf.d/api_upstream.conf:ro
     depends_on:
-      - api-gateway-1
-      - api-gateway-2
-      - api-gateway-3
-      - file-server
+      api-gateway-1:
+        condition: service_healthy
+      api-gateway-2:
+        condition: service_healthy
+      api-gateway-3:
+        condition: service_healthy
+      file-server:
+        condition: service_healthy
 
   scheduler:
     extends:
@@ -93,6 +103,10 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-service
+      # 检查 Redis 中本 SERVICE_ID 心跳时间＜15s
+      test: ["CMD", "python", "-c", "import os, time, redis; key = 'service:' + os.environ['SERVICE_ID']; value = redis.from_url(os.environ['REDIS_URL']).hget(key, 'last_heartbeat'); raise SystemExit(0 if value and time.time() - float(value) < 15 else 1)"]
 
   service-2:
     image: ${COMPANY_PROFILE_REGISTRY:-}${SERVICE_IMAGE:-company-profile-service:v0.1.0}
@@ -108,12 +122,14 @@ services:
     networks:
       - app_net
     depends_on:
-      service-1:
-        condition: service_started
       redis:
         condition: service_healthy
       postgres:
         condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-service
+      # 检查 Redis 中本 SERVICE_ID 心跳时间＜15s
+      test: ["CMD", "python", "-c", "import os, time, redis; key = 'service:' + os.environ['SERVICE_ID']; value = redis.from_url(os.environ['REDIS_URL']).hget(key, 'last_heartbeat'); raise SystemExit(0 if value and time.time() - float(value) < 15 else 1)"]
 
   file-server:
     image: ${COMPANY_PROFILE_REGISTRY:-}${SERVICE_IMAGE:-company-profile-service:v0.1.0}
@@ -127,9 +143,9 @@ services:
       - ${PROFILE_PDF_TEMP_DIR}:/app/data/pdf-temp:ro
     networks:
       - app_net
-    depends_on:
-      service-1:
-        condition: service_started
+    healthcheck:
+      <<: *healthcheck-service
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/health', timeout=3)"]
 
   file-cleanup:
     image: ${COMPANY_PROFILE_REGISTRY:-}${SERVICE_IMAGE:-company-profile-service:v0.1.0}
@@ -139,13 +155,13 @@ services:
     environment:
       PROFILE_PDF_TEMP_TTL_HOURS: ${PROFILE_PDF_TEMP_TTL_HOURS:-24}
       PROFILE_PDF_BACKUP_TTL_DAYS: ${PROFILE_PDF_BACKUP_TTL_DAYS:-7}
-      PROFILE_PDF_CLEANUP_INTERVAL_SECONDS: ${PROFILE_PDF_CLEANUP_INTERVAL_SECONDS:-3600}
-      TZ: Asia/Shanghai
+      PROFILE_PDF_CLEANUP_HOUR: ${PROFILE_PDF_CLEANUP_HOUR:-2}
     volumes:
       - ${PROFILE_PDF_TEMP_DIR}:/app/data/pdf-temp
       - ${PROFILE_PDF_BACKUP_DIR}:/app/data/pdf-backup
     networks:
       - app_net
-    depends_on:
-      service-1:
-        condition: service_started
+    healthcheck:
+      <<: *healthcheck-service
+      # 检查 PID1 是预期程序 file_cleanup.main
+      test: ["CMD", "python", "-c", "from pathlib import Path; raise SystemExit(0 if b'file_cleanup.main' in Path('/proc/1/cmdline').read_bytes() else 1)"]
