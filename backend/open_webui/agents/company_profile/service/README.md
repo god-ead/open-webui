@@ -236,13 +236,13 @@ response_body=5XN73b6j8DnVfq6dUPNiYHuHyrwAYVXPd+mti8okrJk=
 
 ### 8. file_cleanup — 过期文件清理
 
-定时循环执行，基于文件 `st_mtime` 判断过期：
+每天在 `Asia/Shanghai` 的指定整点执行，基于文件 `st_mtime` 和精确 TTL 判断过期：
 
-| 目录 | TTL 默认值 | 环境变量 |
+| 配置项 | 默认值 | 环境变量 |
 |---|---|---|
 | 临时目录 | 24 小时 | `PROFILE_PDF_TEMP_TTL_HOURS` |
 | 备份目录 | 7 天 | `PROFILE_PDF_BACKUP_TTL_DAYS` |
-| 清理间隔 | 3600 秒 | `PROFILE_PDF_CLEANUP_INTERVAL_SECONDS` |
+| 清理小时 | 2（02:00） | `PROFILE_PDF_CLEANUP_HOUR` |
 
 `file-cleanup` 基于文件 `st_mtime` 判断是否超过 TTL。扫描是周期执行的，因此文件达到 TTL 后不会立刻删除，而是在下一次扫描时删除；实际保留时间最多可能比配置的 TTL 多接近一个清理间隔。
 

@@ -240,7 +240,7 @@ response_body=5XN73b6j8DnVfq6dUPNiYHuHyrwAYVXPd+mti8okrJk=
 | `PROFILE_PDF_DOWNLOAD_BASE_URL` | PDF 下载基础 URL | `http://127.0.0.1:8088/api/download` |
 | `PROFILE_PDF_TEMP_TTL_HOURS` | PDF 临时文件保留（小时） | `24` |
 | `PROFILE_PDF_BACKUP_TTL_DAYS` | PDF 备份保留（天） | `7` |
-| `PROFILE_PDF_CLEANUP_INTERVAL_SECONDS` | PDF 清理扫描间隔（秒） | `3600` |
+| `PROFILE_PDF_CLEANUP_HOUR` | PDF 清理时间（0~23） | `2` |
 | `PROFILE_PDF_TEMP_DIR` / `PROFILE_PDF_BACKUP_DIR` | PDF 宿主机目录 | `${DATA_DIR}/pdf_temp` / `${DATA_DIR}/pdf_backup` |
 | `BACKUP_DIR` / `LOG_DIR` | 数据库备份与共享日志目录 | `${DATA_DIR}/backups` / `${DATA_DIR}/.log` |
 | `CALLBACK_MODE` | API Gateway 回调模式，企业画像使用 `aes_cbc` | `aes_cbc` |
