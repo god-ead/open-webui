@@ -114,11 +114,13 @@ class ReportGenerator:
         """Generate a full Markdown report from *data*."""
         sections = [
             self._header(data),
-            self._section_scorecard(data),
-            self._section_probability(data),
-            self._section_strategy(data),
-            self._section_contact_info(data),
             self._section_basic_info(data),
+            self._section_operating_status(data),
+            self._section_company_overview(data),
+            self._section_probability(data),
+            self._section_scorecard(data),
+            self._section_contact_info(data),
+            self._section_strategy(data),
             self._section_six_dimensions(data),
             self._section_conclusion(data),
             self._section_data_sources(data),
@@ -173,7 +175,155 @@ class ReportGenerator:
         )
 
     # ------------------------------------------------------------------
-    # 1. 企业基本信息
+    # 1. 基础工商信息
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _section_basic_info(data: AnalysisResult) -> str:
+        info = data.raw_data.business_info
+
+        fields = [
+            ("法定代表人", info.get("legal_representative")),
+            ("经营状态", info.get("business_status")),
+            ("成立日期", info.get("establishment_date")),
+            ("注册资本", info.get("registered_capital")),
+            ("所属行业",info.get( "industry")),
+            ("企业类型", info.get("company_type")),
+            ("注册地址", info.get("registered_address") or info.get("address")),
+            ("营业期限", info.get("business_term") or info.get("operating_period")),
+            ("员工规模", info.get("employee_scale")),
+            ("所在地域", info.get("region")),
+        ]
+        lines = ["## 一、基础工商信息", ""]
+        lines.extend(
+            f"- {label}：{_format_raw_value(value)}"
+            for label, value in fields
+            if value not in (None, "", [], {})
+        )
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    # 2. 企业经营范围
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _section_operating_status(data: AnalysisResult) -> str:
+        info = data.raw_data.business_info
+        licensed_items = info.get("licensed_items")
+        general_items = info.get("general_items")
+        business_scope = str(info.get("business_scope") or "").strip()
+
+        # 缺少结构化经营范围时，按许可项目和一般项目标记拆分原始文本
+        if not licensed_items and not general_items and business_scope:
+            licensed_marker = "许可项目"
+            general_marker = "一般项目"
+            if licensed_marker in business_scope and general_marker in business_scope:
+                licensed_text, general_text = business_scope.split(general_marker, 1)
+                licensed_items = licensed_text.split(licensed_marker, 1)[1].strip(
+                    "：:；;，, "
+                )
+                general_items = general_text.strip("：:；;，, ")
+
+        lines = ["## 二、经营范围", ""]
+        for label, value in (("许可项目", licensed_items), ("一般项目", general_items)):
+            if value not in (None, "", [], {}):
+                display = (
+                    "；".join(str(item) for item in value)
+                    if isinstance(value, list)
+                    else str(value)
+                )
+                lines.append(f"{label}：{display}")
+
+        if len(lines) == 2 and business_scope:
+            lines.append(business_scope)
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    # 3. 企业整体情况
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _section_company_overview(data: AnalysisResult) -> str:
+        info = data.raw_data.business_info
+        litigation = data.raw_data.litigation_info
+
+        brand_background = info.get("summary") or info.get("main_business")
+
+        # 由 litigation_info 中现有字段 ip_litigation_count / font_infringement 生成“知产纠纷/字体侵权”记录
+        judicial_risk = litigation.get("judicial_risk") or litigation.get("summary")
+        if not judicial_risk:
+            risk_parts = []
+            case_count = litigation.get("ip_litigation_count")
+            if case_count is not None:
+                risk_parts.append(f"公开可查知识产权诉讼 {case_count} 起")
+            font_infringement = litigation.get("font_infringement")
+            if font_infringement is not None:
+                risk_parts.append("有字体侵权记录" if font_infringement else "无字体侵权记录")
+            judicial_risk = "；".join(risk_parts)
+
+        fields = [
+            ("品牌背景", brand_background),
+            ("司法风险", judicial_risk),
+            ("业务模式", info.get("business_model")),
+        ]
+        lines = ["## 三、企业整体情况", ""]
+        lines.extend(
+            f"- {label}：{_format_raw_value(value)}"
+            for label, value in fields
+            if value not in (None, "", [], {})
+        )
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    # 4. 成单可能性评估
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _section_probability(data: AnalysisResult) -> str:
+        sr = data.score_result
+        lines = ["## 四、成单可能性评估\n"]
+        lines.append(f"- **成单可能性等级**：{sr.probability_level}")
+        lines.append(f"- **综合得分**：{sr.total_score:.1f} / 100")
+
+        if sr.top_factors:
+            factors = "、".join(_FEATURE_LABELS.get(f, f) for f in sr.top_factors)
+            lines.append(f"- **关键影响因素（Top-3）**：{factors}")
+
+        if sr.follow_up_suggestion:
+            lines.append(f"- **跟进建议**：{sr.follow_up_suggestion}")
+
+        if sr.low_confidence:
+            lines.append(
+                "\n> ⚠️ **数据置信度低**：超过两个维度数据不足，"
+                "建议补充信息后重新评估。"
+            )
+
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    # 5. 评分卡结果
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _section_scorecard(data: AnalysisResult) -> str:
+        sr = data.score_result
+        lines = ["## 五、评分卡结果\n"]
+        lines.append("| 维度 | 维度得分 | 满分 | 权重 | 加权得分 | 数据充分性 |")
+        lines.append("| --- | --- | --- | --- | --- | --- |")
+
+        for ds in sr.dimension_scores:
+            label = _DIMENSION_LABELS.get(ds.dimension_name, ds.dimension_name)
+            sufficiency = "数据不足" if ds.data_insufficient else "充分"
+            lines.append(
+                f"| {label} | {ds.raw_score:.1f} | {ds.max_score:.1f} "
+                f"| {ds.weight:.0%} | {ds.weighted_score:.1f} | {sufficiency} |"
+            )
+
+        lines.append(f"| **综合得分** | | | | **{sr.total_score:.1f}** | |")
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    # 6. 联系方式
     # ------------------------------------------------------------------
 
     @staticmethod
@@ -182,7 +332,7 @@ class ReportGenerator:
         if not contact:
             return ""
 
-        lines = ["## 📞 企业联系方式", ""]
+        lines = ["## 六、联系方式", ""]
 
         # 主要电话
         phone_fields = [
@@ -193,12 +343,12 @@ class ReportGenerator:
             ("procurement_dept_phone", "采购部"),
             ("hr_phone", "人事/招聘"),
         ]
-        has_phone = False
+        has_contact = False
         for key, label in phone_fields:
             val = contact.get(key)
             if val and str(val).lower() not in ("null", "none", ""):
                 lines.append(f"- {label}：{val}")
-                has_phone = True
+                has_contact = True
 
         # 其他电话
         others = contact.get("other_phones") or []
@@ -206,22 +356,25 @@ class ReportGenerator:
             for p in others:
                 if p and str(p).lower() not in ("null", "none", ""):
                     lines.append(f"- 其他：{p}")
-                    has_phone = True
+                    has_contact = True
 
         # 邮箱
         for key, label in [("email", "企业邮箱"), ("legal_email", "法务邮箱")]:
             val = contact.get(key)
             if val and str(val).lower() not in ("null", "none", ""):
                 lines.append(f"- {label}：{val}")
+                has_contact = True
 
         # 地址
         addr = contact.get("address")
         if addr and str(addr).lower() not in ("null", "none", ""):
             lines.append(f"- 办公地址：{addr}")
+            has_contact = True
 
         # 联系人
         persons = contact.get("contact_persons") or []
         if isinstance(persons, list) and persons:
+            has_contact = True
             lines.append("")
             lines.append("### 关键联系人")
             lines.append("")
@@ -235,7 +388,7 @@ class ReportGenerator:
                     src = p.get("source", "—")
                     lines.append(f"| {name} | {title} | {phone} | {src} |")
 
-        if not has_phone and not persons:
+        if not has_contact:
             return ""
 
         # 来源
@@ -245,38 +398,38 @@ class ReportGenerator:
 
         return "\n".join(lines)
 
-    @staticmethod
-    def _section_basic_info(data: AnalysisResult) -> str:
-        rd = data.raw_data
-        info = rd.business_info
-        lines = ["## 四、企业基本信息\n"]
-        lines.append(f"| 项目 | 内容 |")
-        lines.append(f"| --- | --- |")
-        lines.append(f"| 公司名称 | {rd.company_name} |")
-        lines.append(f"| 公司 ID | {rd.company_id} |")
+    # ------------------------------------------------------------------
+    # 7. 销售沟通策略
+    # ------------------------------------------------------------------
 
-        field_map = [
-            ("法定代表人", "legal_representative"),
-            ("注册资本", "registered_capital"),
-            ("成立日期", "establishment_date"),
-            ("经营状态", "business_status"),
-            ("所属行业", "industry"),
-            ("企业类型", "company_type"),
-            ("员工规模", "employee_scale"),
-            ("所在地域", "region"),
-        ]
-        for label, key in field_map:
-            val = info.get(key, "—")
-            lines.append(f"| {label} | {val} |")
+    @staticmethod
+    def _section_strategy(data: AnalysisResult) -> str:
+        s = data.strategy
+        lines = ["## 七、销售沟通策略\n"]
+        lines.append(f"- **沟通切入点**：{s.entry_point}")
+        lines.append(f"- **风险提示话术方向**：{s.risk_talk_direction}")
+        lines.append(f"- **目标接触角色**：{s.target_role}")
+        lines.append(f"- **产品方案方向**：{s.product_direction}")
+
+        if s.suggestions:
+            lines.append("\n### 具体沟通建议\n")
+            for i, sg in enumerate(s.suggestions, 1):
+                lines.append(f"**建议 {i}：{sg.angle}**\n")
+                lines.append(f"- 话术方向：{sg.talk_direction}")
+                lines.append(f"- 预期效果：{sg.expected_effect}\n")
+
+        if s.obstacle_note:
+            lines.append(f"### 障碍因素与替代策略\n")
+            lines.append(s.obstacle_note)
 
         return "\n".join(lines)
 
     # ------------------------------------------------------------------
-    # 2. 六维特征分析明细
+    # 8. 六维特征分析明细
     # ------------------------------------------------------------------
 
     def _section_six_dimensions(self, data: AnalysisResult) -> str:
-        lines = ["## 五、六维特征分析明细\n"]
+        lines = ["## 八、六维特征分析明细\n"]
 
         # Map dimension key → DimensionFeatures
         dim_map: dict[str, DimensionFeatures] = {
@@ -341,88 +494,14 @@ class ReportGenerator:
         return "\n".join(lines)
 
     # ------------------------------------------------------------------
-    # 3. 评分卡结果
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _section_scorecard(data: AnalysisResult) -> str:
-        sr = data.score_result
-        lines = ["## 一、评分卡结果\n"]
-        lines.append("| 维度 | 维度得分 | 满分 | 权重 | 加权得分 | 数据充分性 |")
-        lines.append("| --- | --- | --- | --- | --- | --- |")
-
-        for ds in sr.dimension_scores:
-            label = _DIMENSION_LABELS.get(ds.dimension_name, ds.dimension_name)
-            sufficiency = "数据不足" if ds.data_insufficient else "充分"
-            lines.append(
-                f"| {label} | {ds.raw_score:.1f} | {ds.max_score:.1f} "
-                f"| {ds.weight:.0%} | {ds.weighted_score:.1f} | {sufficiency} |"
-            )
-
-        lines.append(f"| **综合得分** | | | | **{sr.total_score:.1f}** | |")
-        return "\n".join(lines)
-
-    # ------------------------------------------------------------------
-    # 4. 成单可能性评估
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _section_probability(data: AnalysisResult) -> str:
-        sr = data.score_result
-        lines = ["## 二、成单可能性评估\n"]
-        lines.append(f"- **成单可能性等级**：{sr.probability_level}")
-        lines.append(f"- **综合得分**：{sr.total_score:.1f} / 100")
-
-        if sr.top_factors:
-            factors = "、".join(_FEATURE_LABELS.get(f, f) for f in sr.top_factors)
-            lines.append(f"- **关键影响因素（Top-3）**：{factors}")
-
-        if sr.follow_up_suggestion:
-            lines.append(f"- **跟进建议**：{sr.follow_up_suggestion}")
-
-        if sr.low_confidence:
-            lines.append(
-                "\n> ⚠️ **数据置信度低**：超过两个维度数据不足，"
-                "建议补充信息后重新评估。"
-            )
-
-        return "\n".join(lines)
-
-    # ------------------------------------------------------------------
-    # 5. 销售沟通策略
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _section_strategy(data: AnalysisResult) -> str:
-        s = data.strategy
-        lines = ["## 三、销售沟通策略\n"]
-        lines.append(f"- **沟通切入点**：{s.entry_point}")
-        lines.append(f"- **风险提示话术方向**：{s.risk_talk_direction}")
-        lines.append(f"- **目标接触角色**：{s.target_role}")
-        lines.append(f"- **产品方案方向**：{s.product_direction}")
-
-        if s.suggestions:
-            lines.append("\n### 具体沟通建议\n")
-            for i, sg in enumerate(s.suggestions, 1):
-                lines.append(f"**建议 {i}：{sg.angle}**\n")
-                lines.append(f"- 话术方向：{sg.talk_direction}")
-                lines.append(f"- 预期效果：{sg.expected_effect}\n")
-
-        if s.obstacle_note:
-            lines.append(f"### 障碍因素与替代策略\n")
-            lines.append(s.obstacle_note)
-
-        return "\n".join(lines)
-
-    # ------------------------------------------------------------------
-    # 6. 结论
+    # 9. 综合结论
     # ------------------------------------------------------------------
 
     @staticmethod
     def _section_conclusion(data: AnalysisResult) -> str:
         sr = data.score_result
         s = data.strategy
-        lines = ["## 六、综合结论\n"]
+        lines = ["## 九、综合结论\n"]
 
         # Core value points
         value_points: list[str] = []
@@ -468,7 +547,7 @@ class ReportGenerator:
         return "\n".join(lines)
 
     # ------------------------------------------------------------------
-    # 7. 数据来源说明
+    # 10. 数据来源说明
     # ------------------------------------------------------------------
 
     @staticmethod
@@ -478,7 +557,7 @@ class ReportGenerator:
         company = data.raw_data.company_name or data.raw_data.company_id
         encoded = quote(company)
 
-        lines = ["## 七、数据来源说明\n"]
+        lines = ["## 十、数据来源说明\n"]
 
         # 构造可靠的标准化搜索链接（点击即可查看该企业信息）
         lines.append("### 快速查询链接\n")
