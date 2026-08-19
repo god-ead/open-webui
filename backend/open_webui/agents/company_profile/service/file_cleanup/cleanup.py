@@ -13,12 +13,12 @@ logger = logging.getLogger("company_profile.file_cleanup")
 
 @dataclass(frozen=True)
 class CleanupSettings:
-    """文件清理配置：临时目录、备份目录及各自的 TTL 和清理间隔"""
+    """文件清理配置：临时目录、备份目录及各自的 TTL 和每日清理小时"""
     temp_dir: Path
     backup_dir: Path
     temp_ttl_hours: int
     backup_ttl_days: int
-    interval_seconds: int
+    cleanup_hour: int
 
 
 def _positive_int(value: str | None, default: int) -> int:
@@ -30,6 +30,15 @@ def _positive_int(value: str | None, default: int) -> int:
     return parsed if parsed > 0 else default
 
 
+def _parse_cleanup_hour(value: str | None, default: int = 2) -> int:
+    """解析清理小时，无效时回退默认值"""
+    try:
+        hour = int(value or "")
+    except ValueError:
+        return default
+    return hour if 0 <= hour <= 23 else default
+
+
 def get_cleanup_settings() -> CleanupSettings:
     """从环境变量加载清理配置"""
     return CleanupSettings(
@@ -37,10 +46,7 @@ def get_cleanup_settings() -> CleanupSettings:
         backup_dir=Path("/app/data/pdf-backup"),
         temp_ttl_hours=_positive_int(os.getenv("PROFILE_PDF_TEMP_TTL_HOURS", "24"), 24),
         backup_ttl_days=_positive_int(os.getenv("PROFILE_PDF_BACKUP_TTL_DAYS", "7"), 7),
-        interval_seconds=_positive_int(
-            os.getenv("PROFILE_PDF_CLEANUP_INTERVAL_SECONDS", "3600"),
-            3600,
-        ),
+        cleanup_hour=_parse_cleanup_hour(os.getenv("PROFILE_PDF_CLEANUP_HOUR")),
     )
 
 

@@ -208,14 +208,16 @@ response_body=5XN73b6j8DnVfq6dUPNiYHuHyrwAYVXPd+mti8okrJk=
 - 正整数表示每日最多处理 N 个任务
 - 额度 Redis key 按日期区分：`quota:used:{SERVICE_NAME}:{YYYY-MM-DD}`
 
-额度不足时任务会放回队列，并进入两阶段睡眠：
+额度不足时任务会放回队列，并进入两阶段等待：
 
 | 阶段 | 策略 | 日志 |
 |---|---|---|
-| 一阶段 | `10s * 2^n`，直到达到 `DAILY_VISIT_LIMIT_SLEEP_SECONDS` | 每次打印 |
-| 二阶段 | 固定 `DAILY_VISIT_LIMIT_SLEEP_SECONDS`，默认 300s | Redis 抢锁后每小时最多打印一次 |
+| 一阶段 | 最长等待 `10s * 2^n`，直到达到 `DAILY_VISIT_LIMIT_SLEEP_SECONDS` | 每次打印 |
+| 二阶段 | 最长等待 `DAILY_VISIT_LIMIT_SLEEP_SECONDS`，默认 300s | Redis 抢锁后每小时最多打印一次 |
 
-二阶段日志锁只影响“额度不足导致的 sleep 提示”，其他日志不受影响。
+监控页面手动重置额度时，Redis Pub/Sub 会立即唤醒等待中的 Worker。到达 `Asia/Shanghai` 零点时，Worker 也会结束当前等待并使用新日期的额度键重试。
+
+二阶段日志锁只影响“额度不足导致的等待提示”，其他日志不受影响。
 
 ## 环境变量
 
@@ -240,7 +242,7 @@ response_body=5XN73b6j8DnVfq6dUPNiYHuHyrwAYVXPd+mti8okrJk=
 | `PROFILE_PDF_DOWNLOAD_BASE_URL` | PDF 下载基础 URL | `http://127.0.0.1:8088/api/download` |
 | `PROFILE_PDF_TEMP_TTL_HOURS` | PDF 临时文件保留（小时） | `24` |
 | `PROFILE_PDF_BACKUP_TTL_DAYS` | PDF 备份保留（天） | `7` |
-| `PROFILE_PDF_CLEANUP_INTERVAL_SECONDS` | PDF 清理扫描间隔（秒） | `3600` |
+| `PROFILE_PDF_CLEANUP_HOUR` | PDF 清理时间（0~23） | `2` |
 | `PROFILE_PDF_TEMP_DIR` / `PROFILE_PDF_BACKUP_DIR` | PDF 宿主机目录 | `${DATA_DIR}/pdf_temp` / `${DATA_DIR}/pdf_backup` |
 | `BACKUP_DIR` / `LOG_DIR` | 数据库备份与共享日志目录 | `${DATA_DIR}/backups` / `${DATA_DIR}/.log` |
 | `CALLBACK_MODE` | API Gateway 回调模式，企业画像使用 `aes_cbc` | `aes_cbc` |

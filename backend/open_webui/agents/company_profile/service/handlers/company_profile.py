@@ -49,6 +49,8 @@ class CompanyProfileHandler:
         company_name = company_name_value.strip()
         if not company_name:
             raise ValueError("input.company_name 不能为空")
+        if len(company_name) > 120:
+            raise ValueError("input.company_name 长度不能超过 120 个字符")
         task_id = str(payload.get("task_id", ""))[:16]
 
         result = self.service.generate(company_name)
