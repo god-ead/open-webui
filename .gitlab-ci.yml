@@ -1,6 +1,9 @@
 stages:
   - build    # 镜像构建与发布
 
+include:
+  - local: "backend/open_webui/agents/company_profile/service/.gitlab-ci.yml"
+
 variables:
   REGISTRY_URL: "172.19.52.215:9100"
   # 仅需修改此处：font-rec-zijia为harbor上的项目名称，zijia_font_recognition为构建镜像的名称
@@ -58,7 +61,7 @@ build_and_publish:
   
   # 可选：仅在 push 事件触发（按需调整）
   rules:
-    - if: $CI_PIPELINE_SOURCE == "push" && ($CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "test")
+    - if: $CI_PIPELINE_SOURCE == "push" && ($CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "test" || $CI_COMMIT_BRANCH =~ /^test-.+$/)
   
   # 配置手动触发的变量（用于main分支手动指定版本号）
   variables:
