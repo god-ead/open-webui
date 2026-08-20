@@ -7,15 +7,15 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    # 固定使用本地构建镜像。
-    image: sales-chatbot-image:0.1.8
+    # 从 Harbo 拉取指定版本镜像
+    image: 172.19.52.215:9100/sales-agents/sales-agents-core:V0.1.9.4.1
     container_name: sales-chatbot
     # 将运行期变量从 .env 注入 open-webui 容器
     env_file:
       - .env
     # 持久化 Open WebUI 数据，并保存首次启动自动生成的 WEBUI_SECRET_KEY
     volumes:
-      - /data/app/sales-chatbot:/app/backend/data
+      - ./app/sales-chatbot:/app/backend/data
     ports:
       # 宿主机端口:容器端口。
       - 0.0.0.0:3030:8080
