@@ -1,0 +1,20 @@
+# 本地开发：单独构建并启动 founder-sales 智能体，通过 8050 端口对外提供 OpenAI 兼容 API。
+# 接入方式：在本地 Open WebUI 中手动配置外部链接 http://localhost:8050/v1，API Key 用 .env 的 FOUNDER_SALES_API_KEY。
+services:
+  founder-sales:
+    build:
+      context: ../..
+      dockerfile: services/founder_sales/Dockerfile
+    image: founder-sales:v0.2
+    container_name: founder-sales
+    env_file:
+      - .env
+    environment:
+      # 容器内无 GPU，强制 CPU；.env 里的 cuda:0 仅适用于宿主机直跑。
+      - RAG_DEVICE=cpu
+    volumes:
+      # RAG 知识库、embedding/rerank 模型、checkpoint 均来自宿主机该目录（.env 中绝对路径指向此处）。
+      - /data/app/founder-sales:/data/app/founder-sales
+    ports:
+      - "8050:8050"
+    restart: unless-stopped

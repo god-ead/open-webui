@@ -1,0 +1,295 @@
+x-healthcheck-service: &healthcheck-service
+  interval: 10s
+  timeout: 5s
+  retries: 3
+  start_period: 30s
+
+x-worker-env: &worker-env
+  REDIS_URL: redis://redis:6379/0
+  DATABASE_URL: postgresql://postgres:postgres@postgres:5432/appdb
+  TASK_QUEUE: task_queue
+  RESULT_QUEUE: result_queue
+  HANDLER_MODULES: ${HANDLER_MODULES:-handlers.company_profile:CompanyProfileHandler}
+  LLM_API_KEY: ${LLM_API_KEY:-}
+  LLM_BASE_URL: ${LLM_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+  LLM_MODEL: ${LLM_MODEL:-qwen3.5-plus}
+  LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-180}
+  PROFILE_PDF_TEMP_DIR: ${PROFILE_PDF_TEMP_DIR:-./data/pdf_temp}
+  PROFILE_PDF_BACKUP_DIR: ${PROFILE_PDF_BACKUP_DIR:-./data/pdf_backup}
+  PROFILE_PDF_DOWNLOAD_BASE_URL: ${PROFILE_PDF_DOWNLOAD_BASE_URL:-http://127.0.0.1:8088/api/download}
+  SERVICE_NAME: ${SERVICE_NAME:-company-profile}
+  DAILY_VISIT_LIMIT: ${DAILY_VISIT_LIMIT:-0}
+  DAILY_VISIT_LIMIT_SLEEP_SECONDS: ${DAILY_VISIT_LIMIT_SLEEP_SECONDS:-300}
+  TZ: Asia/Shanghai
+
+networks:
+  app_net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+
+configs:
+  nginx_api_upstream:
+    content: |
+      upstream api_backend {
+          least_conn;
+          server api-gateway-1:8001 weight=1 max_fails=3 fail_timeout=30s;
+          server api-gateway-2:8002 weight=1 max_fails=3 fail_timeout=30s;
+          keepalive 32;
+      }
+
+      upstream company_profile_file_server {
+          server file-server:8010 max_fails=3 fail_timeout=30s;
+          keepalive 8;
+      }
+
+      server {
+          listen 80;
+          server_name _;
+
+          proxy_connect_timeout 10s;
+          proxy_send_timeout 120s;
+          proxy_read_timeout 120s;
+
+          location /health {
+              access_log off;
+              default_type text/plain;
+              return 200 "nginx ok\n";
+          }
+
+          location /api/download/ {
+              proxy_pass http://company_profile_file_server;
+              proxy_http_version 1.1;
+              proxy_set_header Host $$host;
+              proxy_set_header X-Real-IP $$remote_addr;
+              proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+              proxy_set_header Connection "";
+              proxy_intercept_errors on;
+              error_page 502 503 504 = @service_unavailable;
+          }
+
+          location /api/ {
+              limit_req zone=api_limit burst=20 nodelay;
+              proxy_pass http://api_backend;
+              proxy_http_version 1.1;
+              proxy_set_header Host $$host;
+              proxy_set_header X-Real-IP $$remote_addr;
+              proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+              proxy_set_header Connection "";
+              proxy_intercept_errors on;
+              error_page 502 503 504 = @service_unavailable;
+          }
+
+          location /ws/ {
+              proxy_pass http://api_backend;
+              proxy_http_version 1.1;
+              proxy_set_header Host $$host;
+              proxy_set_header X-Real-IP $$remote_addr;
+              proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+              proxy_set_header Upgrade $$http_upgrade;
+              proxy_set_header Connection "upgrade";
+              proxy_read_timeout 3600s;
+              proxy_send_timeout 3600s;
+          }
+
+          location /monitor/api/ {
+              proxy_pass http://monitor:8089/api/;
+              proxy_http_version 1.1;
+              proxy_set_header Host $$host;
+              proxy_set_header X-Real-IP $$remote_addr;
+              proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+              proxy_set_header Connection "";
+          }
+
+          location /monitor/ {
+              proxy_pass http://monitor:8089/;
+              proxy_http_version 1.1;
+              proxy_set_header Host $$host;
+              proxy_set_header X-Real-IP $$remote_addr;
+              proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+              proxy_set_header Connection "";
+          }
+
+          location @service_unavailable {
+              default_type application/json;
+              add_header Retry-After 30 always;
+              return 503 '{"error": "服务暂不可用", "retry_after": 30}';
+          }
+      }
+
+services:
+  postgres:
+    extends:
+      file: docker-compose.infra.yaml
+      service: postgres
+
+  redis:
+    extends:
+      file: docker-compose.infra.yaml
+      service: redis
+
+  api-gateway-1:
+    extends:
+      file: docker-compose.infra.yaml
+      service: api-gateway-1
+
+  api-gateway-2:
+    extends:
+      file: docker-compose.infra.yaml
+      service: api-gateway-2
+
+  nginx:
+    extends:
+      file: docker-compose.infra.yaml
+      service: nginx
+    configs:
+      - source: nginx_api_upstream
+        target: /etc/nginx/conf.d/api_upstream.conf
+    depends_on:
+      api-gateway-1:
+        condition: service_healthy
+      api-gateway-2:
+        condition: service_healthy
+      file-server:
+        condition: service_healthy
+
+  scheduler:
+    extends:
+      file: docker-compose.infra.yaml
+      service: scheduler
+
+  monitor:
+    extends:
+      file: docker-compose.infra.yaml
+      service: monitor
+
+  backup:
+    extends:
+      file: docker-compose.infra.yaml
+      service: backup
+
+  service-1:
+    image: ${COMPANY_PROFILE_REGISTRY:-}${SERVICE_IMAGE:-company-profile-service:v0.1.0}
+    container_name: ${SERVICE_NAME:-company-profile}-service-1
+    restart: always
+    stop_grace_period: 60s
+    environment:
+      <<: *worker-env
+      SERVICE_ID: service-1
+    volumes:
+      - ${LOG_DIR:-.log}:/app/.log
+      - ${PROFILE_PDF_TEMP_DIR}:/app/data/pdf-temp
+      - ${PROFILE_PDF_BACKUP_DIR}:/app/data/pdf-backup
+    networks:
+      - app_net
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-service
+      # 检查 Redis 中本 SERVICE_ID 心跳时间＜15s
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import os, time, redis;
+          key = 'service:' + os.environ['SERVICE_ID'];
+          value = redis.from_url(os.environ['REDIS_URL']).hget(
+          key, 'last_heartbeat'
+          );
+          raise SystemExit(
+          0 if value and time.time() - float(value) < 15 else 1
+          )
+
+  service-2:
+    image: ${COMPANY_PROFILE_REGISTRY:-}${SERVICE_IMAGE:-company-profile-service:v0.1.0}
+    container_name: ${SERVICE_NAME:-company-profile}-service-2
+    restart: always
+    stop_grace_period: 60s
+    environment:
+      <<: *worker-env
+      SERVICE_ID: service-2
+    volumes:
+      - ${LOG_DIR:-.log}:/app/.log
+      - ${PROFILE_PDF_TEMP_DIR}:/app/data/pdf-temp
+      - ${PROFILE_PDF_BACKUP_DIR}:/app/data/pdf-backup
+    networks:
+      - app_net
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-service
+      # 检查 Redis 中本 SERVICE_ID 心跳时间＜15s
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import os, time, redis;
+          key = 'service:' + os.environ['SERVICE_ID'];
+          value = redis.from_url(os.environ['REDIS_URL']).hget(
+          key, 'last_heartbeat'
+          );
+          raise SystemExit(
+          0 if value and time.time() - float(value) < 15 else 1
+          )
+
+  file-server:
+    image: ${COMPANY_PROFILE_REGISTRY:-}${SERVICE_IMAGE:-company-profile-service:v0.1.0}
+    container_name: ${SERVICE_NAME:-company-profile}-file-server
+    restart: always
+    command: uvicorn file_server.main:app --host 0.0.0.0 --port 8010
+    environment:
+      PROFILE_PDF_TEMP_TTL_HOURS: ${PROFILE_PDF_TEMP_TTL_HOURS:-24}
+      TZ: Asia/Shanghai
+    volumes:
+      - ${PROFILE_PDF_TEMP_DIR}:/app/data/pdf-temp:ro
+    networks:
+      - app_net
+    healthcheck:
+      <<: *healthcheck-service
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen(
+          'http://127.0.0.1:8010/health', timeout=3
+          )
+
+  file-cleanup:
+    image: ${COMPANY_PROFILE_REGISTRY:-}${SERVICE_IMAGE:-company-profile-service:v0.1.0}
+    container_name: ${SERVICE_NAME:-company-profile}-file-cleanup
+    restart: always
+    command: python -m file_cleanup.main
+    environment:
+      PROFILE_PDF_TEMP_TTL_HOURS: ${PROFILE_PDF_TEMP_TTL_HOURS:-24}
+      PROFILE_PDF_BACKUP_TTL_DAYS: ${PROFILE_PDF_BACKUP_TTL_DAYS:-7}
+      PROFILE_PDF_CLEANUP_HOUR: ${PROFILE_PDF_CLEANUP_HOUR:-2}
+    volumes:
+      - ${PROFILE_PDF_TEMP_DIR}:/app/data/pdf-temp
+      - ${PROFILE_PDF_BACKUP_DIR}:/app/data/pdf-backup
+    networks:
+      - app_net
+    healthcheck:
+      <<: *healthcheck-service
+      # 检查 PID1 是预期程序 file_cleanup.main
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          from pathlib import Path;
+          raise SystemExit(
+          0 if b'file_cleanup.main' in
+          Path('/proc/1/cmdline').read_bytes() else 1
+          )
