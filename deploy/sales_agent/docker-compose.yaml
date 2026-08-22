@@ -1,7 +1,4 @@
-# 远程测试环境：从 harbor 拉取镜像，在 sales_net 下同时启动
-# founder-sales（营销智能体）与 open-webui（前端页面）两个容器。
-# 镜像由根 .gitlab-ci.yml 在 test 分支 push 时自动构建，并推送浮动 test 标签。
-# GPU 默认关闭（RAG_DEVICE=cpu，见 .env）；需要 GPU 时改用 docker-compose.server.yaml。
+# LibreChat 直连 founder_sales；子路径反向代理在后续阶段单独接入。
 services:
   # 智能体服务
   sales-agent:
@@ -13,9 +10,10 @@ services:
     env_file:
       - .env
     environment:
-      - TZ=Asia/Shanghai
-      - APP_PORT=8050
-      - FOUNDER_SALES_API_KEY=${FOUNDER_SALES_API_KEY}
+      TZ: Asia/Shanghai
+      APP_PORT: 8050
+      FOUNDER_SALES_API_KEY: ${FOUNDER_SALES_API_KEY:?FOUNDER_SALES_API_KEY is required}
+      QWEN_API_KEY: ${QWEN_API_KEY:?QWEN_API_KEY is required}
     volumes:
       # checkpoint \ RAG 知识库 \ embedding/rerank 模型 均来自宿主机对应目录
       - ${FOUNDER_SALES_DATA_DIR:-./data/founder-sales}:/app/data
@@ -67,6 +65,7 @@ services:
         condition: service_healthy
     networks:
       - sales_agent_net
+    restart: unless-stopped
     healthcheck:
       test:
         - CMD
@@ -97,6 +96,7 @@ services:
         - "db.runCommand({ ping: 1 }).ok"
     networks:
       - sales_agent_net
+    restart: unless-stopped
 
 networks:
   sales_agent_net:
