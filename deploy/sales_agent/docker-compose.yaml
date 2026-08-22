@@ -1,0 +1,103 @@
+# 远程测试环境：从 harbor 拉取镜像，在 sales_net 下同时启动
+# founder-sales（营销智能体）与 open-webui（前端页面）两个容器。
+# 镜像由根 .gitlab-ci.yml 在 test 分支 push 时自动构建，并推送浮动 test 标签。
+# GPU 默认关闭（RAG_DEVICE=cpu，见 .env）；需要 GPU 时改用 docker-compose.server.yaml。
+services:
+  # 智能体服务
+  sales-agent:
+    container_name: founder-sales-agent
+    build:
+      context: ../..
+      dockerfile: services/founder_sales/Dockerfile
+    image: ${FOUNDER_SALES_IMAGE:-founder-sales-agent:dev}
+    env_file:
+      - .env
+    environment:
+      - TZ=Asia/Shanghai
+      - APP_PORT=8050
+      - FOUNDER_SALES_API_KEY=${FOUNDER_SALES_API_KEY}
+    volumes:
+      # checkpoint \ RAG 知识库 \ embedding/rerank 模型 均来自宿主机对应目录
+      - ${FOUNDER_SALES_DATA_DIR:-./data/founder-sales}:/app/data
+    expose:
+      - "8050"
+    networks:
+      - sales_agent_net
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8050/healthz', timeout=3)
+      interval: 15s
+      timeout: 5s
+      start_period: 120s
+      retries: 5
+
+  # LibreChat前端
+  librechat:
+    container_name: founder-sales-librechat
+    image: ${LIBRACHAT_IMAGE}
+    ports:
+      - "${SALES_AGENT_PORT:-3030}:3080"
+    env_file:
+      - .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3080
+      MONGO_URI: mongodb://librechat-mongodb:27017/LibreChat
+      DOMAIN_CLIENT: ${PUBLIC_ORIGIN}
+      DOMAIN_SERVER: ${PUBLIC_ORIGIN}
+      SEARCH: false
+      ENDPOINTS: custom
+      ALLOW_REGISTRATION: true
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET is required}
+      CREDS_KEY: ${CREDS_KEY:?CREDS_KEY is required}
+      CREDS_IV: ${CREDS_IV:?CREDS_IV is required}
+    volumes:
+      - ./librechat.yaml:/app/librechat.yaml:ro
+      - ${LIBRACHAT_UPLOADS_DIR:-./data/uploads}:/app/uploads
+      - ${LIBRACHAT_LOGS_DIR:-./data/logs}:/app/logs
+    depends_on:
+      librechat-mongodb:
+        condition: service_healthy
+      sales-agent:
+        condition: service_healthy
+    networks:
+      - sales_agent_net
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          require('http').get(
+          'http://127.0.0.1:3080/', response =>
+          process.exit(response.statusCode === 200 ? 0 : 1)
+          ).on('error', () => process.exit(1))
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+
+  librechat-mongodb:
+    container_name: founder-sales-librechat-mongodb
+    image: ${MONGO_IMAGE:-mongo:8.0}
+    command: mongod --noauth
+    volumes:
+      - ${MONGO_DATA_DIR:-./data/mongodb}:/data/db
+    healthcheck:
+      test:
+        - CMD
+        - mongosh
+        - --quiet
+        - --eval
+        - "db.runCommand({ ping: 1 }).ok"
+    networks:
+      - sales_agent_net
+
+networks:
+  sales_agent_net:
+    name: sales_agent_net

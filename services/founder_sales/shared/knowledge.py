@@ -314,6 +314,8 @@ class KnowledgeService:
             str(settings.faiss_index_path),
             str(settings.rag_store_path),
             str(settings.rag_device),
+            settings.rag_candidate_k,
+            settings.rag_top_k,
         )
         with cls._load_lock:
             # 检查锁：相同配置直接复用已加载单例，避免重复加载模型
@@ -342,7 +344,14 @@ class KnowledgeService:
                     settings.reranker_model_path, "reranker", directory=True
                 )
                 reranker = CrossEncoderReranker(reranker_path, device)
-            service = cls(embedding, index, store, reranker, candidate_k=50, top_k=5)
+            service = cls(
+                embedding, 
+                index, 
+                store, 
+                reranker, 
+                candidate_k=settings.rag_candidate_k, 
+                top_k=settings.rag_top_k
+            )
             cls._singleton = service
             cls._singleton_key = key
             return service

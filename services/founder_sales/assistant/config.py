@@ -28,9 +28,9 @@ class Settings:
     """
 
     app_bind_host: str = "0.0.0.0"
-    app_port: int = 8040
+    app_port: int = 8050
     langgraph_api_key: str = ""
-    checkpoint_db_path: str = "./data/runtime/checkpoints.sqlite3"
+    checkpoint_db_path: str = "/app/data/runtime/checkpoints.sqlite3"
     business_timeout_seconds: int = 360
 
     qwen_base_url: str = "https://dashscope.aliyuncs.com/api/v1"
@@ -40,10 +40,10 @@ class Settings:
     qwen_fallback_model: str = "qwen3.5-plus"
     qwen_timeout_seconds: int = 60
 
-    rag_store_path: str = "data/sales_rag.sqlite3"
-    faiss_index_path: str = "data/sales_rag.faiss"
-    embedding_model_path: str = "data/model/embedding"
-    reranker_model_path: str = "data/model/rerank"
+    rag_store_path: str = "/app/data/knowledge/sales_rag.sqlite3"
+    faiss_index_path: str = "/app/data/knowledge/sales_rag.faiss"
+    embedding_model_path: str = "/app/data/model/embedding"
+    reranker_model_path: str = ""
     rag_device: str = "cpu"
     rag_candidate_k: int = 50
     rag_top_k: int = 5

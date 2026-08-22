@@ -1,0 +1,79 @@
+# LibreChat Configuration for Font Link
+version: "1.3.13"
+
+cache: true
+
+interface:
+  modelSelect: false
+  parameters: false
+  presets: false
+  multiConvo: false
+  bookmarks: false
+  memories: false
+  temporaryChat: false
+  autoSubmitFromUrl: false
+  runCode: false
+  webSearch: false
+  contextUsage: false
+  contextCost: false
+  fileSearch: false
+  fileCitations: false
+  buildInfo: false
+
+  prompts:
+    use: false
+    create: false
+    share: false
+    public: false
+  agents:
+    use: false
+    create: false
+    share: false
+    public: false
+  skills:
+    use: false
+    create: false
+    share: false
+    public: false
+  mcpServers:
+    use: false
+    create: false
+    share: false
+    public: false
+  peoplePicker:
+    users: false
+    groups: false
+    roles: false
+  marketplace:
+    use: false
+  sharedLinks:
+    create: false
+    share: false
+    public: false
+    snapshotFiles: false
+  remoteAgents:
+    use: false
+    create: false
+    share: false
+    public: false
+
+  customWelcome: "欢迎使用方正营销智能体"
+
+memory:
+  disabled: true
+
+endpoints:
+  custom:
+    - name: "Founder Sales"
+      modelDisplayLabel: "方正营销智能体"
+      apiKey: "${FOUNDER_SALES_API_KEY}"
+      baseURL: "http://sales-agent:8050/v1"
+      models:
+        default:
+          - "founder-sales-assistant"
+        fetch: false
+      headers:
+        X-User-Id: "{{LIBRECHAT_USER_ID}}"
+        X-Conversation-Id: "{{LIBRECHAT_BODY_CONVERSATIONID}}"
+        Idempotency-Key: "{{LIBRECHAT_BODY_MESSAGEID}}"
+      titleConvo: false
