@@ -4,7 +4,8 @@
 
 ```
 founder-sales/
-├── app.py                       # OpenAI 兼容接入层（FastAPI + SSE + 幂等 + 鉴权）
+├── app.py                       # 应用入口：组装 LangGraphRuntime 与 OpenAI Bridge
+├── langgraph_runtime.py         # LangGraph 会话、checkpoint、幂等和流事件
 ├── main_agent_graph.py          # LangGraph 单节点图（main_agent → END）
 ├── requirements.txt             # Python 依赖
 ├── Dockerfile                   # 镜像构建（Python 3.11 slim）
@@ -21,6 +22,10 @@ founder-sales/
 │   ├── __init__.py              #   对外 re-export：Settings / AssistantState / TurnRecord
 │   ├── config.py                #   纯环境变量配置（Settings.from_env）
 │   └── state.py                 #   LangGraph 状态：TurnRecord / merge_turn_records / AssistantState
+│
+├── bridge/                      # 外部前端协议 Adapter
+│   ├── __init__.py              #   re-export OpenAI router
+│   └── openai_chat.py           #   Chat Completions 请求、身份 Header 与 SSE 转换
 │
 ├── shared/                      # 运行时服务（节点共享）
 │   ├── __init__.py              #   re-export KnowledgeService
@@ -48,7 +53,9 @@ founder-sales/
 
 | 文件 | 职责 |
 |---|---|
-| [app.py](../app.py) | 生命周期装配（checkpoint / QwenMainAgent / KnowledgeService / QwenWebSearch）；`/healthz`、`/v1/models`、`/v1/chat/completions`；Bearer 鉴权（`FOUNDER_SALES_API_KEY`）；`Idempotency-Key` 幂等（completed 回放 / failed 与 in_progress 重试）；同消息在途去重（409）；SSE 输出正文与 `reasoning_content` 状态 |
+| [app.py](../app.py) | 生命周期装配 checkpoint、QwenMainAgent、KnowledgeService 和 Tool，并将 `LangGraphRuntime` 注入 OpenAI Bridge |
+| [langgraph_runtime.py](../langgraph_runtime.py) | `stream_turn()` interface；封装 LangGraph 执行、checkpoint、MessageID 幂等和会话锁，产出运行状态及原始图事件 |
+| [bridge/openai_chat.py](../bridge/openai_chat.py) | `/healthz`、`/v1/models`、`/v1/chat/completions`；Bearer 与身份 Header 校验；OpenAI messages 到 LangGraph messages、LangGraph 流事件到 OpenAI SSE 的转换 |
 | [main_agent_graph.py](../main_agent_graph.py) | 单节点 `main_agent` 图：转发 Agent 流事件到自定义 stream writer，回答与完成状态原子写入 checkpoint（`messages` + `last_turn` + `turn_records`） |
 
 ### assistant/ — 运行时契约

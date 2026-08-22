@@ -7,7 +7,9 @@
 单 Agent 工具调用模式（V0.2.0 起，legacy 多节点图已移除）：
 
 ```
-Open WebUI ── OpenAI 兼容 ──▶ app.py (FastAPI + SSE)
+Open WebUI ── OpenAI 兼容 ──▶ bridge/openai_chat.py
+                                  │ LangGraph messages / events
+                             LangGraphRuntime（checkpoint + 幂等）
                                   │
                              LangGraph 单节点图 (main_agent_graph.py)
                                   │

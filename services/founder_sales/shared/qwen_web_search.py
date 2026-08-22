@@ -16,7 +16,7 @@ from founder_sales.assistant.config import Settings
 
 
 logger = logging.getLogger("uvicorn.error")
-WEB_DEBUG = "[DEBUG-WEB-7f3a]"
+WEB_DEBUG = "[DEBUG-WEB]"
 _ANSWER_INSTRUCTION = (
     "请执行联网搜索后回答。回答正文不要包含URL、引用角标或来源列表；"
     "来源将由调用程序统一处理。"
