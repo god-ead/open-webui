@@ -365,26 +365,24 @@ class QwenWebSearch:
         self.url = _generation_url(settings.qwen_base_url)
 
     async def search(self, query: str, *, max_sources: int = 10) -> WebContext:
-        """执行联网搜索；内容检查失败且无正文时按配置有限重试。"""
+        """执行联网搜索；返回受控错误时按配置有限重试。"""
 
         total_attempts = max(0, self.settings.qwen_search_retry_count) + 1
         for attempt in range(1, total_attempts + 1):
             result = await web_search(query, client=self, max_sources=max_sources)
-            retryable = (
-                result.supplier_code == "DataInspectionFailed"
-                and not result.answer_text.strip()
-            )
-            if not retryable:
+            if result.error is None:
                 return result
 
             will_retry = attempt < total_attempts
             logger.warning(
-                "%s qwen search data inspection failed attempt=%d/%d "
-                "error=%r message=%r request_id=%r will_retry=%s",
+                "%s qwen search failed attempt=%d/%d error=%r "
+                "supplier_code=%r supplier_message=%r request_id=%r "
+                "will_retry=%s",
                 WEB_DEBUG,
                 attempt,
                 total_attempts,
                 result.error,
+                result.supplier_code,
                 result.supplier_message,
                 result.request_id,
                 will_retry,

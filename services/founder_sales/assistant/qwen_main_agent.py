@@ -566,7 +566,6 @@ class QwenMainAgent:
             result.get("error")
             for item, result in zip(prepared, results)
             if item.call.name == "web_search"
-            and result.get("supplier_code") == "DataInspectionFailed"
             and isinstance(result.get("error"), str)
             and result["error"]
         ]

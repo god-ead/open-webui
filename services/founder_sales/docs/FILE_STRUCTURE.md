@@ -69,7 +69,7 @@ founder-sales/
 |---|---|
 | [company_profile.py](../tools/company_profile.py) | `CompanyProfileTool`：在线程中调用同步企业画像核心，并返回 Markdown 报告 |
 | [knowledge.py](../tools/knowledge.py) | `KnowledgeService`：启动期硬加载 embedding 模型与 FAISS 索引（缺任一文件启动失败）；`search()` 按 FAISS 相似度召回，`RERANKER_MODEL_PATH` 非空时用 CrossEncoder 重排，否则按相似度直排取 top_k |
-| [qwen_web_search.py](../tools/qwen_web_search.py) | `QwenWebSearch`：调用 `QWEN_SEARCH_MODEL` 联网搜索，规范化候选回答、来源和调用元数据，并处理内容检查重试 |
+| [qwen_web_search.py](../tools/qwen_web_search.py) | `QwenWebSearch`：调用 `QWEN_SEARCH_MODEL` 联网搜索，规范化候选回答、来源和调用元数据，并对受控错误进行有限重试 |
 | [contact_search.py](../tools/contact_search.py) | `ContactSearch`：保留的联系方式搜索实现；当前不导出、不注册给主 Agent |
 | [information_organizer.py](../tools/information_organizer.py) | `QwenInformationOrganizer`：联系方式搜索使用的 JSON Schema 信息整理模块 |
 
