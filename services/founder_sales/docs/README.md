@@ -64,6 +64,7 @@ docker compose up -d --build
 | `QWEN_AGENT_MODEL` | `qwen3.7-plus` | 主 Agent 工具调用模型 |
 | `QWEN_FALLBACK_MODEL` | `qwen3.5-plus` | 主模型不可用时的静默降级模型（留空则禁用） |
 | `QWEN_SEARCH_MODEL` | `qwen3.5-plus` | web_search 工具内部的搜索子模型 |
+| `QWEN_SEARCH_RETRY_COUNT` | 2 | 联网搜索因 `DataInspectionFailed` 且正文为空时的额外重试次数 |
 | `QWEN_TIMEOUT_SECONDS` | 60 | 模型请求超时 |
 | `BUSINESS_TIMEOUT_SECONDS` | 360 | httpx 客户端总超时 |
 | `RAG_STORE_PATH` | `data/sales_rag.sqlite3` | 知识库 chunk 存储 |

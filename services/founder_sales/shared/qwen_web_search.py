@@ -62,6 +62,9 @@ class WebContext(BaseModel):
     search_count: int = 0
     token_usage: WebTokenUsage = Field(default_factory=WebTokenUsage)
     error: str | None = None
+    supplier_code: str | None = None
+    supplier_message: str | None = None
+    request_id: str | None = None
 
 
 def _json_messages(
@@ -171,7 +174,7 @@ async def web_search(
     client: QwenWebSearch,
     max_sources: int = 10,
 ) -> WebContext:
-    """执行一次 agent 搜索并规范化结果；agent_max 仅作为未来供应商备选策略。"""
+    """执行一次 agent 搜索并规范化供应商结果。"""
 
     normalized_query = query.strip()
     if not normalized_query:
@@ -207,6 +210,9 @@ async def web_search(
     usage: Mapping[str, Any] = {}
     search_count = 0
     supplier_error: str | None = None
+    supplier_code: str | None = None
+    supplier_message: str | None = None
+    request_id: str | None = None
     event_count = 0
     started = perf_counter()
 
@@ -248,8 +254,15 @@ async def web_search(
 
                 code = event.get("code")
                 message = event.get("message")
+                event_request_id = event.get("request_id")
+                if isinstance(event_request_id, str) and event_request_id:
+                    request_id = event_request_id
                 if code or message:
-                    supplier_error = f"Qwen 供应商错误：{code or message}"
+                    supplier_code = str(code) if code else None
+                    supplier_message = str(message) if message else None
+                    supplier_error = (
+                        f"Qwen 供应商错误：{supplier_code or supplier_message}"
+                    )
 
                 output = event.get("output")
                 if isinstance(output, Mapping):
@@ -330,6 +343,9 @@ async def web_search(
         search_count=search_count,
         token_usage=token_usage,
         error=error,
+        supplier_code=supplier_code,
+        supplier_message=supplier_message,
+        request_id=request_id,
     )
 
 
@@ -349,9 +365,34 @@ class QwenWebSearch:
         self.url = _generation_url(settings.qwen_base_url)
 
     async def search(self, query: str, *, max_sources: int = 10) -> WebContext:
-        """执行一次联网搜索，供应商失败时返回受控错误。"""
+        """执行联网搜索；内容检查失败且无正文时按配置有限重试。"""
 
-        return await web_search(query, client=self, max_sources=max_sources)
+        total_attempts = max(0, self.settings.qwen_search_retry_count) + 1
+        for attempt in range(1, total_attempts + 1):
+            result = await web_search(query, client=self, max_sources=max_sources)
+            retryable = (
+                result.supplier_code == "DataInspectionFailed"
+                and not result.answer_text.strip()
+            )
+            if not retryable:
+                return result
+
+            will_retry = attempt < total_attempts
+            logger.warning(
+                "%s qwen search data inspection failed attempt=%d/%d "
+                "error=%r message=%r request_id=%r will_retry=%s",
+                WEB_DEBUG,
+                attempt,
+                total_attempts,
+                result.error,
+                result.supplier_message,
+                result.request_id,
+                will_retry,
+            )
+            if not will_retry:
+                return result
+
+        raise RuntimeError("unreachable search retry state")
 
 
 def _generation_url(base_url: str) -> str:

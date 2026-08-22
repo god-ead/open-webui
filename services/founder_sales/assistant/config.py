@@ -36,6 +36,7 @@ class Settings:
     qwen_base_url: str = "https://dashscope.aliyuncs.com/api/v1"
     qwen_api_key: str = ""
     qwen_search_model: str = "qwen3.5-plus"
+    qwen_search_retry_count: int = 2
     qwen_agent_model: str = "qwen3.7-plus"
     qwen_fallback_model: str = "qwen3.5-plus"
     qwen_timeout_seconds: int = 60
@@ -76,6 +77,9 @@ class Settings:
             qwen_api_key=_env_str("QWEN_API_KEY", cls.qwen_api_key),
             qwen_search_model=_env_str(
                 "QWEN_SEARCH_MODEL", cls.qwen_search_model
+            ),
+            qwen_search_retry_count=_env_int(
+                "QWEN_SEARCH_RETRY_COUNT", cls.qwen_search_retry_count
             ),
             qwen_agent_model=_env_str(
                 "QWEN_AGENT_MODEL", cls.qwen_agent_model

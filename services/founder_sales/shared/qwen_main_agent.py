@@ -561,6 +561,21 @@ class QwenMainAgent:
             )
             final_answer += report
             yield report
+
+        web_errors = [
+            result.get("error")
+            for item, result in zip(prepared, results)
+            if item.call.name == "web_search"
+            and result.get("supplier_code") == "DataInspectionFailed"
+            and isinstance(result.get("error"), str)
+            and result["error"]
+        ]
+        if web_errors:
+            error_suffix = "\n\n---\n\n" + "\n".join(
+                f"error：{error}" for error in web_errors
+            )
+            final_answer += error_suffix
+            yield error_suffix
         logger.info("%s model response phase=final body=%s", AGENT_LOG, final_answer)
 
 __all__ = ["QwenMainAgent", "TOOL_SCHEMAS"]
