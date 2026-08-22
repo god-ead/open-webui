@@ -1,5 +1,28 @@
-# LibreChat 直连 founder_sales；子路径反向代理在后续阶段单独接入。
+# Nginx 通过 /sales-agent 暴露 LibreChat，LibreChat 内部直连 founder_sales。
 services:
+  nginx:
+    container_name: founder-sales-nginx
+    image: ${NGINX_IMAGE:-nginx:1.27-alpine}
+    ports:
+      - "${SALES_AGENT_PORT:-3030}:8080"
+    environment:
+      PUBLIC_BASE_PATH: ${PUBLIC_BASE_PATH:?PUBLIC_BASE_PATH is required}
+    volumes:
+      - ./nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+    depends_on:
+      librechat:
+        condition: service_healthy
+    networks:
+      - sales_agent_net
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -q -O /dev/null "http://127.0.0.1:8080$${PUBLIC_BASE_PATH}/"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # 智能体服务
   sales-agent:
     container_name: founder-sales-agent
@@ -37,16 +60,16 @@ services:
   librechat:
     container_name: founder-sales-librechat
     image: ${LIBRACHAT_IMAGE}
-    ports:
-      - "${SALES_AGENT_PORT:-3030}:3080"
+    expose:
+      - "3080"
     env_file:
       - .env
     environment:
       HOST: 0.0.0.0
       PORT: 3080
       MONGO_URI: mongodb://librechat-mongodb:27017/LibreChat
-      DOMAIN_CLIENT: ${PUBLIC_ORIGIN}
-      DOMAIN_SERVER: ${PUBLIC_ORIGIN}
+      DOMAIN_CLIENT: ${PUBLIC_ORIGIN}${PUBLIC_BASE_PATH:?PUBLIC_BASE_PATH is required}
+      DOMAIN_SERVER: ${PUBLIC_ORIGIN}${PUBLIC_BASE_PATH:?PUBLIC_BASE_PATH is required}
       SEARCH: false
       ENDPOINTS: custom
       ALLOW_REGISTRATION: true
