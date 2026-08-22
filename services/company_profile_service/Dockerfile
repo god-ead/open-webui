@@ -16,33 +16,19 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/*
 
 # ── 依赖安装 ──
-# service 核心依赖（Redis + PostgreSQL）及业务依赖
-COPY service/requirements.txt service-requirements.txt
+# service 核心依赖（Redis + PostgreSQL）
+COPY services/company_profile_service/requirements.txt service-requirements.txt
+COPY packages/company_profile/requirements.txt company-profile-requirements.txt
 RUN python -m pip install --no-cache-dir \
     -i https://pypi.tuna.tsinghua.edu.cn/simple/ \
     --extra-index-url https://pypi.mirrors.ustc.edu.cn/simple/ \
-    -r service-requirements.txt
+    -r service-requirements.txt \
+    -r company-profile-requirements.txt
 
-# 业务依赖
-COPY requirements.txt requirements.txt
-RUN python -m pip install --no-cache-dir \
-    -i https://pypi.tuna.tsinghua.edu.cn/simple/ \
-    --extra-index-url https://pypi.mirrors.ustc.edu.cn/simple/ \
-    -r requirements.txt
+# 企业画像共享源码
+COPY packages/company_profile /app/company_profile
 
-# ── 基础代码 ──
-COPY service/main.py .
-COPY service/app/ app/
-COPY service/handlers/ handlers/
-COPY service/file_server/ file_server/
-COPY service/file_cleanup/ file_cleanup/
-COPY service/common/ common/
+# ── 服务代码 ──
+COPY services/company_profile_service /app/company_profile_service
 
-# ── 业务代码 ──
-COPY __init__.py company_profile/
-COPY application/ company_profile/application/
-COPY lookalike/ company_profile/lookalike/
-COPY noop_storage.py company_profile/
-COPY scoring_config.yaml company_profile/
-
-CMD ["python", "main.py"]
+CMD ["python", "-m", "company_profile_service.main"]

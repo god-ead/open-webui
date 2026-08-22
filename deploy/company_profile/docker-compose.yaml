@@ -4,12 +4,18 @@ x-healthcheck-service: &healthcheck-service
   retries: 3
   start_period: 30s
 
+x-company-profile-image: &company-profile-image
+  build:
+    context: ../..
+    dockerfile: services/company_profile_service/Dockerfile
+  image: ${COMPANY_PROFILE_REGISTRY:-}${SERVICE_IMAGE:-company-profile-service:v0.1.0}
+
 x-worker-env: &worker-env
   REDIS_URL: redis://redis:6379/0
   DATABASE_URL: postgresql://postgres:postgres@postgres:5432/appdb
   TASK_QUEUE: task_queue
   RESULT_QUEUE: result_queue
-  HANDLER_MODULES: ${HANDLER_MODULES:-handlers.company_profile:CompanyProfileHandler}
+  HANDLER_MODULES: ${HANDLER_MODULES:-company_profile_service.handlers.company_profile:CompanyProfileHandler}
   LLM_API_KEY: ${LLM_API_KEY:-}
   LLM_BASE_URL: ${LLM_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
   LLM_MODEL: ${LLM_MODEL:-qwen3.5-plus}
@@ -171,7 +177,7 @@ services:
       service: backup
 
   service-1:
-    image: ${COMPANY_PROFILE_REGISTRY:-}${SERVICE_IMAGE:-company-profile-service:v0.1.0}
+    <<: *company-profile-image
     container_name: ${SERVICE_NAME:-company-profile}-service-1
     restart: always
     stop_grace_period: 60s
@@ -207,7 +213,7 @@ services:
           )
 
   service-2:
-    image: ${COMPANY_PROFILE_REGISTRY:-}${SERVICE_IMAGE:-company-profile-service:v0.1.0}
+    <<: *company-profile-image
     container_name: ${SERVICE_NAME:-company-profile}-service-2
     restart: always
     stop_grace_period: 60s
@@ -243,10 +249,10 @@ services:
           )
 
   file-server:
-    image: ${COMPANY_PROFILE_REGISTRY:-}${SERVICE_IMAGE:-company-profile-service:v0.1.0}
+    <<: *company-profile-image
     container_name: ${SERVICE_NAME:-company-profile}-file-server
     restart: always
-    command: uvicorn file_server.main:app --host 0.0.0.0 --port 8010
+    command: uvicorn company_profile_service.file_server.main:app --host 0.0.0.0 --port 8010
     environment:
       PROFILE_PDF_TEMP_TTL_HOURS: ${PROFILE_PDF_TEMP_TTL_HOURS:-24}
       TZ: Asia/Shanghai
@@ -267,10 +273,10 @@ services:
           )
 
   file-cleanup:
-    image: ${COMPANY_PROFILE_REGISTRY:-}${SERVICE_IMAGE:-company-profile-service:v0.1.0}
+    <<: *company-profile-image
     container_name: ${SERVICE_NAME:-company-profile}-file-cleanup
     restart: always
-    command: python -m file_cleanup.main
+    command: python -m company_profile_service.file_cleanup.main
     environment:
       PROFILE_PDF_TEMP_TTL_HOURS: ${PROFILE_PDF_TEMP_TTL_HOURS:-24}
       PROFILE_PDF_BACKUP_TTL_DAYS: ${PROFILE_PDF_BACKUP_TTL_DAYS:-7}
