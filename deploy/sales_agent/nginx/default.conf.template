@@ -34,6 +34,7 @@ server {
     }
 
     location / {
-        return 404;
+        default_type text/plain;
+        return 404 "Founder-Sales-Agent is available at /sales-agent\n";
     }
 }

@@ -449,6 +449,41 @@ class QwenMainAgent:
             yield {"type": "status", "description": description}
         results = await asyncio.gather(*(self._execute(item) for item in prepared))
 
+        profile_reports = [
+            (
+                str(result.get("company_name") or item.query),
+                result["markdown"],
+            )
+            for item, result in zip(prepared, results)
+            if item.call.name == "generate_company_profile"
+            and result.get("ok") is not False
+            and isinstance(result.get("markdown"), str)
+            and result["markdown"]
+        ]
+        only_successful_profiles = (
+            bool(prepared)
+            and len(profile_reports) == len(prepared)
+            and all(
+                item.call.name == "generate_company_profile"
+                for item in prepared
+            )
+        )
+        if only_successful_profiles:
+            if len(profile_reports) == 1:
+                answer = profile_reports[0][1]
+            else:
+                answer = "\n\n---\n\n".join(
+                    f"## {company_name}完整企业画像报告\n\n{markdown}"
+                    for company_name, markdown in profile_reports
+                )
+            logger.info(
+                "%s model response phase=profile_artifact body=%s",
+                AGENT_LOG,
+                answer,
+            )
+            yield answer
+            return
+
         assistant_calls = [
             {
                 "id": item.call.call_id,
@@ -485,13 +520,28 @@ class QwenMainAgent:
             len(tool_messages),
         )
         final_answer = ""
-        async for delta in self._deltas_with_fallback(self._payload(final_messages, with_tools=False)):
-            if delta.get("tool_calls"):
-                raise RuntimeError("Qwen requested a tool after the tool budget was closed")
-            content = _content_text(delta.get("content"))
-            if content:
-                final_answer += content
-                yield content
+        try:
+            async for delta in self._deltas_with_fallback(
+                self._payload(final_messages, with_tools=False)
+            ):
+                if delta.get("tool_calls"):
+                    raise RuntimeError(
+                        "Qwen requested a tool after the tool budget was closed"
+                    )
+                content = _content_text(delta.get("content"))
+                if content:
+                    final_answer += content
+                    yield content
+        except Exception:
+            if not profile_reports:
+                raise
+            logger.exception(
+                "%s supplemental model response failed; preserving profile artifact",
+                AGENT_LOG,
+            )
+            notice = "\n\n补充分析未能完整生成，以下为完整企业画像报告。"
+            final_answer += notice
+            yield notice
 
         grouped_sources = [
             (item.query, result.get("sources") or [])
@@ -503,6 +553,14 @@ class QwenMainAgent:
         if suffix:
             final_answer += suffix
             yield suffix
+
+        for company_name, markdown in profile_reports:
+            report = (
+                f"\n\n---\n\n## {company_name}完整企业画像报告\n\n"
+                f"{markdown}"
+            )
+            final_answer += report
+            yield report
         logger.info("%s model response phase=final body=%s", AGENT_LOG, final_answer)
 
 __all__ = ["QwenMainAgent", "TOOL_SCHEMAS"]
