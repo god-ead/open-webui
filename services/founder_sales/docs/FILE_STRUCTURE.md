@@ -21,26 +21,23 @@ founder-sales/
 ├── assistant/                   # 运行时契约
 │   ├── __init__.py              #   对外 re-export：Settings / AssistantState / TurnRecord
 │   ├── config.py                #   纯环境变量配置（Settings.from_env）
-│   └── state.py                 #   LangGraph 状态：TurnRecord / merge_turn_records / AssistantState
+│   ├── state.py                 #   LangGraph 状态：TurnRecord / merge_turn_records / AssistantState
+│   └── qwen_main_agent.py       #   Qwen 主 Agent：工具调用循环 + fallback 静默降级
 │
 ├── bridge/                      # 外部前端协议 Adapter
 │   ├── __init__.py              #   re-export OpenAI router
 │   └── openai_chat.py           #   Chat Completions 请求、身份 Header 与 SSE 转换
 │
-├── shared/                      # 运行时服务（节点共享）
-│   ├── __init__.py              #   re-export KnowledgeService
+├── tools/                       # 主 Agent 的 Tool 实现
+│   ├── __init__.py              #   re-export 当前启用的三个 Tool
+│   ├── company_profile.py       #   企业画像 Tool Adapter
 │   ├── knowledge.py             #   销售知识 RAG：FAISS 召回 + SQLite 取 chunk + 可选 reranker
-│   ├── qwen_main_agent.py       #   Qwen 主 Agent：工具调用循环 + fallback 静默降级
-│   └── qwen_web_search.py       #   联网搜索工具：查询词生成 + 结果整理（QWEN_SEARCH_MODEL）
+│   ├── qwen_web_search.py       #   联网搜索 Tool：供应商调用、重试与结果整理
+│   ├── contact_search.py        #   保留的联系方式搜索源码，当前未注册
+│   └── information_organizer.py #   联系方式搜索的信息整理模块
 │
 ├── prompts/
 │   └── main_agent.md            # 主 Agent 系统提示词
-│
-├── tests/
-│   └── shared/                  # 当前运行链路的测试
-│       ├── test_knowledge_no_reranker.py
-│       ├── test_qwen_main_agent.py
-│       └── test_qwen_web_search.py
 │
 └── .dev/                        # 本地研究/备份区（gitignore，不入库）
     └── backup/
@@ -64,20 +61,23 @@ founder-sales/
 |---|---|
 | [config.py](../assistant/config.py) | `Settings` 数据类 + `from_env()`；全部 QWEN_*/RAG_*/鉴权/checkpoint 配置在此定义，模型身份（model_id/display_name）由代码持有 |
 | [state.py](../assistant/state.py) | `TurnRecord`（单轮记录：message_id/status/answer/response_content）、`merge_turn_records` 合并器、`AssistantState`（messages + last_turn + turn_records） |
+| [qwen_main_agent.py](../assistant/qwen_main_agent.py) | `QwenMainAgent`：OpenAI 兼容 Chat Completions 流式调用；校验并执行 Tool；最多一轮 Tool Call 后组织最终回答；主模型失败且未产出增量时切换 fallback 模型 |
 
-### shared/ — 运行时服务
+### tools/ — Tool 实现
 
 | 文件 | 职责 |
 |---|---|
-| [knowledge.py](../shared/knowledge.py) | `KnowledgeService`：启动期硬加载 embedding 模型与 FAISS 索引（缺任一文件启动失败）；`search()` 按 FAISS 相似度召回，`RERANKER_MODEL_PATH` 非空时用 CrossEncoder 重排，否则按相似度直排取 top_k |
-| [qwen_main_agent.py](../shared/qwen_main_agent.py) | `QwenMainAgent`：OpenAI 兼容 Chat Completions 流式调用（`_deltas`）；工具 schema 校验与并行调用；最多一轮工具调用后生成最终回答；`_deltas_with_fallback` 在未产出任何增量即失败时静默切 `QWEN_FALLBACK_MODEL` 重试（仅日志） |
-| [qwen_web_search.py](../shared/qwen_web_search.py) | `QwenWebSearch`：用 `QWEN_SEARCH_MODEL` 生成自包含查询词、抓取页面、整理候选回答与来源，向主 Agent 返回结构化工具结果 |
+| [company_profile.py](../tools/company_profile.py) | `CompanyProfileTool`：在线程中调用同步企业画像核心，并返回 Markdown 报告 |
+| [knowledge.py](../tools/knowledge.py) | `KnowledgeService`：启动期硬加载 embedding 模型与 FAISS 索引（缺任一文件启动失败）；`search()` 按 FAISS 相似度召回，`RERANKER_MODEL_PATH` 非空时用 CrossEncoder 重排，否则按相似度直排取 top_k |
+| [qwen_web_search.py](../tools/qwen_web_search.py) | `QwenWebSearch`：调用 `QWEN_SEARCH_MODEL` 联网搜索，规范化候选回答、来源和调用元数据，并处理内容检查重试 |
+| [contact_search.py](../tools/contact_search.py) | `ContactSearch`：保留的联系方式搜索实现；当前不导出、不注册给主 Agent |
+| [information_organizer.py](../tools/information_organizer.py) | `QwenInformationOrganizer`：联系方式搜索使用的 JSON Schema 信息整理模块 |
 
 ### 配置与构建
 
 | 文件 | 职责 |
 |---|---|
-| [Dockerfile](../Dockerfile) | Python 3.11 slim；COPY 范围 = app.py + main_agent_graph.py + assistant/ + prompts/ + shared/；HEALTHCHECK 探测 `/healthz` |
+| [Dockerfile](../Dockerfile) | Python 3.11 slim；复制完整 `services/founder_sales` 和共享 `packages/company_profile` 源码；HEALTHCHECK 探测 `/healthz` |
 | [docker-compose.yaml](../docker-compose.yaml) | 本地开发：build 本地镜像 `founder-sales:v0.2`，挂载 `/data/app/founder-sales`，映射 `8050:8050`，强制 `RAG_DEVICE=cpu` |
 | [.gitlab-ci.yml](../.gitlab-ci.yml) | `build_founder_sales` job：push 触发（main/test 分支 + 路径过滤）；`main` + 手动版本 → 版本号 + `latest`；`test` → SHA8 + 浮动 `test` tag |
 | [.env.example](../.env.example) | 配置样例；与 `program/open-webui/.env.example` 的 Founder Sales 段保持同步 |

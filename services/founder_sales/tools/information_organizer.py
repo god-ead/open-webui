@@ -19,7 +19,7 @@ from jsonschema.validators import validator_for
 from pydantic import BaseModel, ConfigDict
 
 from founder_sales.assistant.config import Settings
-from founder_sales.shared.qwen_web_search import _jsonable
+from founder_sales.tools.qwen_web_search import _jsonable
 
 
 logger = logging.getLogger("uvicorn.error")

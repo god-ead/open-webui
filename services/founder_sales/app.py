@@ -17,10 +17,8 @@ from founder_sales.assistant.config import Settings
 from founder_sales.bridge import router as openai_router
 from founder_sales.langgraph_runtime import LangGraphRuntime
 from founder_sales.main_agent_graph import build_main_agent_graph
-from founder_sales.shared.knowledge import KnowledgeService
-from founder_sales.shared.qwen_main_agent import QwenMainAgent
-from founder_sales.shared.qwen_web_search import QwenWebSearch
-from founder_sales.tools import CompanyProfileTool
+from founder_sales.assistant.qwen_main_agent import QwenMainAgent
+from founder_sales.tools import CompanyProfileTool, KnowledgeService, QwenWebSearch
 
 
 @asynccontextmanager

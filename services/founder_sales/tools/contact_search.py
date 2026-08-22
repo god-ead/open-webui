@@ -9,7 +9,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from founder_sales.shared.qwen_web_search import WebSource
+from founder_sales.tools.qwen_web_search import WebSource
 
 
 logger = logging.getLogger("uvicorn.error")

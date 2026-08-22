@@ -95,8 +95,6 @@ docker compose up -d --build
 pytest tests/          # 需要依赖环境（langgraph/httpx 等）
 ```
 
-- `tests/shared/`：RAG 无 reranker 降级、Qwen 主 Agent、联网搜索
-
 ## 目录说明
 
 见 [FILE_STRUCTURE.md](FILE_STRUCTURE.md)。
