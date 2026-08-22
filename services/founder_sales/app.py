@@ -12,6 +12,10 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from company_profile.application import (
+    CompanyProfileConfig,
+    CompanyProfileService,
+)
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage
@@ -21,11 +25,10 @@ from pydantic import BaseModel
 from founder_sales.assistant.config import Settings
 from founder_sales.assistant.state import TurnRecord
 from founder_sales.main_agent_graph import build_main_agent_graph
-from founder_sales.shared.contact_search import ContactSearch
-from founder_sales.shared.information_organizer import QwenInformationOrganizer
 from founder_sales.shared.knowledge import KnowledgeService
 from founder_sales.shared.qwen_main_agent import QwenMainAgent
 from founder_sales.shared.qwen_web_search import QwenWebSearch
+from founder_sales.tools import CompanyProfileTool
 
 
 MODEL_ID = "founder-sales-assistant"
@@ -89,9 +92,17 @@ async def lifespan(service: FastAPI):
         try:
             knowledge = await asyncio.to_thread(KnowledgeService.load, settings)
             web_search = QwenWebSearch(settings, client)
-            contact_search = ContactSearch(
-                web_search,
-                QwenInformationOrganizer(settings, client),
+            company_profile = CompanyProfileTool(
+                CompanyProfileService(
+                    CompanyProfileConfig(
+                        llm_api_key=settings.company_profile_llm_api_key,
+                        llm_base_url=settings.company_profile_llm_base_url,
+                        llm_model=settings.company_profile_llm_model,
+                        llm_timeout_seconds=(
+                            settings.company_profile_llm_timeout_seconds
+                        ),
+                    )
+                )
             )
             service.state.graph = build_main_agent_graph(
                 saver,
@@ -100,7 +111,7 @@ async def lifespan(service: FastAPI):
                     client,
                     web_search,
                     knowledge,
-                    contact_search,
+                    company_profile,
                 ),
             )
             service.state.thread_locks = defaultdict(asyncio.Lock)

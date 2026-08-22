@@ -67,9 +67,9 @@ TOOL_SCHEMAS = [
         parameter_name="query",
     ),
     _tool_schema(
-        "search_company_contacts",
-        "从官网、天眼查和招投标等公开渠道搜索指定企业的电话、邮箱、联系人和地址，并返回结构化结果。",
-        "需要搜索公开联系方式的完整企业名称。",
+        "generate_company_profile",
+        "为指定企业生成完整企业画像和营销价值分析；仅在用户明确要求企业画像、企业分析、客户画像或营销价值研判时调用。",
+        "需要生成企业画像的完整企业名称。",
         parameter_name="company_name",
     ),
 ]
@@ -172,16 +172,10 @@ def _tool_result_for_model(
             ],
             "error": result.get("error"),
         }
-    if tool_name == "search_company_contacts":
+    if tool_name == "generate_company_profile":
         return {
             key: result.get(key)
-            for key in (
-                "success",
-                "data",
-                "channel_errors",
-                "error_code",
-                "error_message",
-            )
+            for key in ("company_name", "markdown", "version")
         }
     return result
 
@@ -215,14 +209,14 @@ class QwenMainAgent:
         client: httpx.AsyncClient,
         web_search: Any,
         knowledge: Any,
-        contact_search: Any,
+        company_profile: Any,
     ) -> None:
-        """注入模型连接和三个检索工具。"""
+        """注入模型连接、两个检索工具和企业画像 Tool。"""
         self.settings = settings
         self.client = client
         self.web_search = web_search
         self.knowledge = knowledge
-        self.contact_search = contact_search
+        self.company_profile = company_profile
         self.url = _chat_completions_url(settings.qwen_base_url)
         self.headers = {
             "Authorization": f"Bearer {settings.qwen_api_key}",
@@ -310,7 +304,7 @@ class QwenMainAgent:
         parameters = {
             "web_search": "query",
             "search_sales_knowledge": "query",
-            "search_company_contacts": "company_name",
+            "generate_company_profile": "company_name",
         }
         for call in calls:
             call.call_id = call.call_id or f"call_{call.index}"
@@ -376,9 +370,10 @@ class QwenMainAgent:
                         "hits": [asdict(hit) for hit in hits],
                         "error": None,
                     }
+                elif call.name == "generate_company_profile":
+                    result = await self.company_profile.generate(prepared.query)
                 else:
-                    value = await self.contact_search.search(prepared.query)
-                    result = value.model_dump(mode="json")
+                    raise RuntimeError(f"unsupported prepared Tool: {call.name}")
             except Exception as exc:
                 logger.exception(
                     "%s tool failed call_id=%s tool=%s",
@@ -414,10 +409,11 @@ class QwenMainAgent:
             *messages,
         ]
         logger.info(
-            "%s model request phase=decision model=%s messages=%d tools=3",
+            "%s model request phase=decision model=%s messages=%d tools=%d",
             AGENT_LOG,
             self.settings.qwen_agent_model,
             len(conversation),
+            len(TOOL_SCHEMAS),
         )
         calls: dict[int, _ToolCall] = {}
         direct_answer = ""
@@ -448,7 +444,7 @@ class QwenMainAgent:
             description = {
                 "web_search": "正在联网搜索",
                 "search_sales_knowledge": "正在查询销售知识库",
-                "search_company_contacts": "正在搜索企业联系方式",
+                "generate_company_profile": "正在生成企业画像",
             }[item.call.name]
             yield {"type": "status", "description": description}
         results = await asyncio.gather(*(self._execute(item) for item in prepared))
@@ -500,7 +496,7 @@ class QwenMainAgent:
         grouped_sources = [
             (item.query, result.get("sources") or [])
             for item, result in zip(prepared, results)
-            if item.call.name in {"web_search", "search_company_contacts"}
+            if item.call.name == "web_search"
             and not result.get("error")
         ]
         suffix = _source_suffix(grouped_sources)

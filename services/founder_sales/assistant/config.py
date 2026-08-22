@@ -40,6 +40,13 @@ class Settings:
     qwen_fallback_model: str = "qwen3.5-plus"
     qwen_timeout_seconds: int = 60
 
+    company_profile_llm_api_key: str = ""
+    company_profile_llm_base_url: str = (
+        "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    )
+    company_profile_llm_model: str = "qwen3.5-plus"
+    company_profile_llm_timeout_seconds: int = 180
+
     rag_store_path: str = "/app/data/knowledge/sales_rag.sqlite3"
     faiss_index_path: str = "/app/data/knowledge/sales_rag.faiss"
     embedding_model_path: str = "/app/data/model/embedding"
@@ -78,6 +85,22 @@ class Settings:
             ),
             qwen_timeout_seconds=_env_int(
                 "QWEN_TIMEOUT_SECONDS", cls.qwen_timeout_seconds
+            ),
+            company_profile_llm_api_key=_env_str(
+                "COMPANY_PROFILE_LLM_API_KEY",
+                cls.company_profile_llm_api_key,
+            ),
+            company_profile_llm_base_url=_env_str(
+                "COMPANY_PROFILE_LLM_BASE_URL",
+                cls.company_profile_llm_base_url,
+            ),
+            company_profile_llm_model=_env_str(
+                "COMPANY_PROFILE_LLM_MODEL",
+                cls.company_profile_llm_model,
+            ),
+            company_profile_llm_timeout_seconds=_env_int(
+                "COMPANY_PROFILE_LLM_TIMEOUT_SECONDS",
+                cls.company_profile_llm_timeout_seconds,
             ),
             rag_store_path=_env_str("RAG_STORE_PATH", cls.rag_store_path),
             faiss_index_path=_env_str("FAISS_INDEX_PATH", cls.faiss_index_path),
