@@ -9,7 +9,7 @@
 ```text
 浏览器
   → Nginx（/sales-agent）
-  → LibreChat
+  → 定制 LibreChat（CRM 认证网关）
   → OpenAI Chat Completions Bridge
   → LangGraph Runtime
   → QwenMainAgent
@@ -42,6 +42,7 @@ Nginx 通过 `/sales-agent` 暴露 LibreChat 页面、接口和流式连接。Li
 open-webui/
 ├── services/
 │   ├── founder_sales/             # 营销智能体、LangGraph、Bridge 与 Tool
+│   ├── librechat_sales/     # 定制 LibreChat、CRM 认证网关与前端补丁
 │   └── company_profile_service/   # 企业画像 Worker、Handler、PDF 与文件服务
 ├── packages/
 │   └── company_profile/           # 两套镜像共享的企业画像核心源码
@@ -50,7 +51,7 @@ open-webui/
     └── company_profile/           # 企业画像完整分布式部署
 ```
 
-`services` 保存应用，`packages` 保存共享业务实现，`deploy` 保存部署配置。两个 Dockerfile 都以仓库根目录为上下文，将共享源码直接复制进镜像，不要求发布 Python package。
+`services` 保存可独立构建的应用，`packages` 保存共享业务实现，`deploy` 保存部署配置。Python 服务以仓库根目录为构建上下文以复制共享源码；定制 LibreChat 以自身服务目录为上下文，在固定上游镜像上应用定点补丁。
 
 ## 环境要求
 
@@ -67,8 +68,17 @@ cp .env.example .env
 # 编辑 .env
 
 docker compose --env-file .env config
-docker compose --env-file .env up -d --build
+docker compose --env-file .env pull
+docker compose --env-file .env up -d --no-build
 docker compose ps
+```
+
+本地开发需要从源码构建时，额外叠加 dev 覆盖文件：
+
+```bash
+docker compose --env-file .env \
+  -f docker-compose.yaml -f docker-compose.dev.yaml \
+  up -d --build
 ```
 
 至少需要检查以下配置：
@@ -103,9 +113,12 @@ cp .env.example .env
 # 编辑 .env
 
 docker compose --env-file .env -f docker-compose.yaml config
-docker compose --env-file .env -f docker-compose.yaml up -d --build
+docker compose --env-file .env -f docker-compose.yaml pull
+docker compose --env-file .env -f docker-compose.yaml up -d --no-build
 docker compose --env-file .env -f docker-compose.yaml ps
 ```
+
+本地开发需要从源码构建时，额外叠加 `docker-compose.dev.yaml`。
 
 至少设置 `PUBLIC_HOST`、`LLM_API_KEY`，以及 Callback Body、Callback Token 的 AES Key 和 IV。默认 Nginx 端口为 `8088`，提供任务、PDF 下载、WebSocket 和监控路由。生产环境还应确认镜像仓库、`DATA_DIR`、下载地址、回调超时和每日额度。
 
@@ -115,7 +128,7 @@ docker compose --env-file .env -f docker-compose.yaml ps
 
 营销智能体通过 `FOUNDER_SALES_DATA_DIR` 持久化 checkpoint、知识库和模型；LibreChat 分别持久化 MongoDB、上传与日志。企业画像服务用 `DATA_DIR` 管理 PDF、备份和日志，并用 Compose volume 保存数据库数据。
 
-修改 `services` 或共享源码后需重建对应镜像。新镜像不会自动替换运行中的容器，部署时应执行 `docker compose up -d --build`。两套部署不要复用项目名或数据目录。
+修改 `services` 或共享源码后由 CI 构建并推送镜像。正式和测试环境在 Harbor 中选定标签、更新 `.env` 后执行 `docker compose pull` 与 `docker compose up -d --no-build`；只有本地开发叠加 `docker-compose.dev.yaml` 并使用 `--build`。两套部署不要复用项目名或数据目录。
 
 ## 验证与排障
 
@@ -132,6 +145,8 @@ python -m compileall packages/company_profile
 
 - [营销智能体说明](services/founder_sales/docs/README.md)
 - [营销智能体文件结构](services/founder_sales/docs/FILE_STRUCTURE.md)
+- [定制 LibreChat 服务说明](services/librechat_sales/README.md)
+- [定制 LibreChat 文件结构](services/librechat_sales/docs/FILE_STRUCTURE.md)
 - [企业画像核心说明](packages/company_profile/README.md)
 - [企业画像评分逻辑](packages/company_profile/评分逻辑.md)
 - [企业画像任务服务说明](services/company_profile_service/README.md)

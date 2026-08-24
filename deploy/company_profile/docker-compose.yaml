@@ -5,10 +5,7 @@ x-healthcheck-service: &healthcheck-service
   start_period: 30s
 
 x-company-profile-image: &company-profile-image
-  build:
-    context: ../..
-    dockerfile: services/company_profile_service/Dockerfile
-  image: ${COMPANY_PROFILE_REGISTRY:-}${SERVICE_IMAGE:-company-profile-service:v0.1.0}
+  image: ${COMPANY_PROFILE_REGISTRY:?COMPANY_PROFILE_REGISTRY is required}${SERVICE_IMAGE:?SERVICE_IMAGE is required}
 
 x-worker-env: &worker-env
   REDIS_URL: redis://redis:6379/0

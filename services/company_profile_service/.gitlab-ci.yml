@@ -3,7 +3,7 @@ build_company_profile_service:
   image: docker.fzyun.io/docker:28.1.1
 
   variables:
-    COMPANY_PROFILE_DIR: "backend/open_webui/agents/company_profile"
+    SERVICE_DIR: "services/company_profile_service"
     IMAGE_NAME: "$REGISTRY_URL/sales-agents/company-profile-service"
     BASE_IMAGE_REGISTRY: "docker.fzyun.io/"
     CUSTOM_IMAGE_TAG: ""
@@ -28,9 +28,9 @@ build_company_profile_service:
       echo "开始构建企业画像镜像: ${IMAGE_NAME}:${IMAGE_TAG}"
       DOCKER_BUILDKIT=1 docker build \
         --build-arg "BASE_IMAGE_REGISTRY=${BASE_IMAGE_REGISTRY}" \
-        -f "${COMPANY_PROFILE_DIR}/service/Dockerfile" \
+        -f "${SERVICE_DIR}/Dockerfile" \
         -t "${IMAGE_NAME}:${IMAGE_TAG}" \
-        "${COMPANY_PROFILE_DIR}" || { echo "企业画像镜像构建失败"; exit 1; }
+        . || { echo "企业画像镜像构建失败"; exit 1; }
 
       docker push "${IMAGE_NAME}:${IMAGE_TAG}" || { echo "企业画像镜像推送失败"; exit 1; }
 
@@ -42,5 +42,6 @@ build_company_profile_service:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push" && ($CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "test" || $CI_COMMIT_BRANCH =~ /^test-.+$/)'
       changes:
-        - backend/open_webui/agents/company_profile/**/*
+        - services/company_profile_service/**/*
+        - packages/company_profile/**/*
         - .gitlab-ci.yml

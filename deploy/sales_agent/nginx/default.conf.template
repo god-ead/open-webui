@@ -12,6 +12,18 @@ server {
         return 308 ${PUBLIC_BASE_PATH}/;
     }
 
+    # CRM widget 的默认根地址直接进入认证启动页；成功后再跳转 LibreChat 会话。
+    location = ${PUBLIC_BASE_PATH}/ {
+        proxy_pass http://librechat:3080/api/auth/crm/entry;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Prefix ${PUBLIC_BASE_PATH};
+    }
+
     location ^~ ${PUBLIC_BASE_PATH}/ {
         proxy_pass http://librechat:3080/;
         proxy_http_version 1.1;

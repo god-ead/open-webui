@@ -1,0 +1,10 @@
+stages:
+  - build
+
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && ($CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "test" || $CI_COMMIT_BRANCH =~ /^test-.+$/)'
+    - when: never
+
+include:
+  - local: "/services/**/.gitlab-ci.yml"

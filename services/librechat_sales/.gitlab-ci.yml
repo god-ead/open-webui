@@ -1,10 +1,11 @@
-build_founder_sales:
+build_sales_agent_librechat:
   stage: build
   image: docker.fzyun.io/docker:28.1.1
 
   variables:
-    SERVICE_DIR: "services/founder_sales"
-    IMAGE_NAME: "$REGISTRY_URL/sales-agents/founder-sales"
+    SERVICE_DIR: "services/librechat_sales"
+    IMAGE_NAME: "$REGISTRY_URL/sales-agents/founder-sales-librechat"
+    LIBRECHAT_BASE_IMAGE: "registry.librechat.ai/danny-avila/librechat:v0.8.7"
     CUSTOM_IMAGE_TAG: ""
 
   before_script:
@@ -24,16 +25,16 @@ build_founder_sales:
         echo "使用 commit SHA 作为标签: ${IMAGE_TAG}"
       fi
 
-      echo "开始构建 founder-sales 镜像: ${IMAGE_NAME}:${IMAGE_TAG}"
+      echo "开始构建定制 LibreChat 镜像: ${IMAGE_NAME}:${IMAGE_TAG}"
       DOCKER_BUILDKIT=1 docker build \
+        --build-arg "LIBRECHAT_BASE_IMAGE=${LIBRECHAT_BASE_IMAGE}" \
         -f "${SERVICE_DIR}/Dockerfile" \
         -t "${IMAGE_NAME}:${IMAGE_TAG}" \
-        . || { echo "founder-sales 镜像构建失败"; exit 1; }
+        "${SERVICE_DIR}" || { echo "定制 LibreChat 镜像构建失败"; exit 1; }
 
       docker push "${IMAGE_NAME}:${IMAGE_TAG}" || { echo "镜像推送失败"; exit 1; }
 
       if [ "$CI_COMMIT_BRANCH" = "main" ] && [ -n "$CUSTOM_IMAGE_TAG" ]; then
-        echo "为main分支打上latest标签"
         docker tag "${IMAGE_NAME}:${IMAGE_TAG}" "${IMAGE_NAME}:latest"
         docker push "${IMAGE_NAME}:latest" || { echo "推送 latest 失败"; exit 1; }
       fi
@@ -50,6 +51,5 @@ build_founder_sales:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push" && ($CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "test" || $CI_COMMIT_BRANCH =~ /^test-.+$/)'
       changes:
-        - services/founder_sales/**/*
-        - packages/company_profile/**/*
+        - services/librechat_sales/**/*
         - .gitlab-ci.yml
