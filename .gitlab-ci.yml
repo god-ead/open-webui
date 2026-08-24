@@ -7,4 +7,4 @@ workflow:
     - when: never
 
 include:
-  - local: "/services/**/.gitlab-ci.yml"
+  - local: "services/**/.gitlab-ci.yml"
