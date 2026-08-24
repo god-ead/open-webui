@@ -1,0 +1,256 @@
+# 通用基础服务模板。
+# 这里只维护可复用的基础服务：postgres、redis、api-gateway、nginx、scheduler、monitor、backup。
+# 业务服务、业务路由覆盖、业务文件存储等内容由 docker-compose.yaml 继承并覆盖。
+
+x-healthcheck-infra: &healthcheck-infra
+  interval: 10s
+  timeout: 5s
+  retries: 3
+  start_period: 30s
+
+networks:
+  app_net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+
+services:
+  postgres:
+    image: ${DEPLOY_BASE_REGISTRY:-}${POSTGRES_IMAGE:-postgres:v0.1.0}
+    container_name: ${SERVICE_NAME:-default_service}-postgres
+    restart: always
+    command: postgres -c timezone=Asia/Shanghai
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: appdb
+      TZ: Asia/Shanghai
+    networks:
+      - app_net
+    healthcheck:
+      <<: *healthcheck-infra
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+
+  redis:
+    image: ${DEPLOY_BASE_REGISTRY:-}${REDIS_IMAGE:-redis:v0.1.0}
+    container_name: ${SERVICE_NAME:-default_service}-redis
+    restart: always
+    volumes:
+      - redis_data:/data
+    environment:
+      TZ: Asia/Shanghai
+    networks:
+      - app_net
+    healthcheck:
+      <<: *healthcheck-infra
+      test: ["CMD", "redis-cli", "ping"]
+
+  api-gateway-1:
+    image: ${DEPLOY_BASE_REGISTRY:-}${API_GATEWAY_IMAGE:-api-gateway:v0.1.0}
+    container_name: ${SERVICE_NAME:-default_service}-api-1
+    restart: always
+    volumes:
+      - ${LOG_DIR:-.log}:/app/.log
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/appdb
+      TASK_QUEUE: task_queue
+      RESULT_QUEUE: result_queue
+      CALLBACK_MODE: ${CALLBACK_MODE:-json}
+      CALLBACK_BODY_AES_KEY: ${CALLBACK_BODY_AES_KEY:-}
+      CALLBACK_BODY_AES_IV: ${CALLBACK_BODY_AES_IV:-}
+      CALLBACK_TOKEN_AES_KEY: ${CALLBACK_TOKEN_AES_KEY:-}
+      CALLBACK_TOKEN_AES_IV: ${CALLBACK_TOKEN_AES_IV:-}
+      CALLBACK_SERVER_IP: ${CALLBACK_SERVER_IP:-}
+      CALLBACK_TIMEOUT: ${CALLBACK_TIMEOUT:-30}
+      CALLBACK_MAX_RETRIES: ${CALLBACK_MAX_RETRIES:-3}
+      CALLBACK_RETRY_DELAY_SECONDS: ${CALLBACK_RETRY_DELAY_SECONDS:-2}
+      CALLBACK_REQUIRED: ${CALLBACK_REQUIRED:-true}
+      ALLOWED_TASK_TYPES: ${ALLOWED_TASK_TYPES:-}
+      TZ: Asia/Shanghai
+      SERVICE_ID: api-gateway-1
+      SERVICE_PORT: "8001"
+    networks:
+      - app_net
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-infra
+      test:
+        - CMD
+        - curl
+        - --fail
+        - --silent
+        - --output
+        - /dev/null
+        - http://127.0.0.1:8001/health
+
+  api-gateway-2:
+    image: ${DEPLOY_BASE_REGISTRY:-}${API_GATEWAY_IMAGE:-api-gateway:v0.1.0}
+    container_name: ${SERVICE_NAME:-default_service}-api-2
+    restart: always
+    volumes:
+      - ${LOG_DIR:-.log}:/app/.log
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/appdb
+      TASK_QUEUE: task_queue
+      RESULT_QUEUE: result_queue
+      CALLBACK_MODE: ${CALLBACK_MODE:-json}
+      CALLBACK_BODY_AES_KEY: ${CALLBACK_BODY_AES_KEY:-}
+      CALLBACK_BODY_AES_IV: ${CALLBACK_BODY_AES_IV:-}
+      CALLBACK_TOKEN_AES_KEY: ${CALLBACK_TOKEN_AES_KEY:-}
+      CALLBACK_TOKEN_AES_IV: ${CALLBACK_TOKEN_AES_IV:-}
+      CALLBACK_SERVER_IP: ${CALLBACK_SERVER_IP:-}
+      CALLBACK_TIMEOUT: ${CALLBACK_TIMEOUT:-30}
+      CALLBACK_MAX_RETRIES: ${CALLBACK_MAX_RETRIES:-3}
+      CALLBACK_RETRY_DELAY_SECONDS: ${CALLBACK_RETRY_DELAY_SECONDS:-2}
+      CALLBACK_REQUIRED: ${CALLBACK_REQUIRED:-true}
+      ALLOWED_TASK_TYPES: ${ALLOWED_TASK_TYPES:-}
+      TZ: Asia/Shanghai
+      SERVICE_ID: api-gateway-2
+      SERVICE_PORT: "8002"
+    networks:
+      - app_net
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-infra
+      test:
+        - CMD
+        - curl
+        - --fail
+        - --silent
+        - --output
+        - /dev/null
+        - http://127.0.0.1:8002/health
+
+  nginx:
+    image: ${DEPLOY_BASE_REGISTRY:-}${NGINX_IMAGE:-nginx:v0.1.0}
+    container_name: ${SERVICE_NAME:-default_service}-nginx
+    restart: always
+    ports:
+      - ${NGINX_HOST_PORT:-8088}:80
+    environment:
+      TZ: Asia/Shanghai
+    networks:
+      - app_net
+    depends_on:
+      api-gateway-1:
+        condition: service_healthy
+      api-gateway-2:
+        condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-infra
+      test:
+        - CMD
+        - wget
+        - -q
+        - --spider
+        - http://127.0.0.1/health
+
+  scheduler:
+    image: ${DEPLOY_BASE_REGISTRY:-}${SCHEDULER_IMAGE:-scheduler:v0.1.0}
+    container_name: ${SERVICE_NAME:-default_service}-scheduler
+    restart: always
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ${LOG_DIR:-.log}:/app/.log
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/appdb
+      TASK_QUEUE: task_queue
+      RESULT_QUEUE: result_queue
+      TZ: Asia/Shanghai
+      CHECK_INTERVAL: "10"
+      HEARTBEAT_TIMEOUT: "300"
+      TASK_TIMEOUT_MINUTES: "20"
+      SERVICE_NAME: ${SERVICE_NAME:-default_service}
+    networks:
+      - app_net
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-infra
+      # 检查 Redis 与 PostgreSQL 数据库能否连接
+      timeout: 5s
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import os, redis, psycopg2;
+          r = redis.from_url(os.environ['REDIS_URL'],
+          socket_connect_timeout=1, socket_timeout=1);
+          r.ping();
+          psycopg2.connect(os.environ['DATABASE_URL'],
+          connect_timeout=2).close()
+
+  monitor:
+    image: ${DEPLOY_BASE_REGISTRY:-}${MONITOR_IMAGE:-monitor:v0.1.0}
+    container_name: ${SERVICE_NAME:-default_service}-monitor
+    restart: always
+    volumes:
+      - ${LOG_DIR:-.log}:/app/.log
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/appdb
+      TASK_QUEUE: task_queue
+      RESULT_QUEUE: result_queue
+      SERVICE_NAME: ${SERVICE_NAME:-default_service}
+      TZ: Asia/Shanghai
+    networks:
+      - app_net
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-infra
+      # 检查 Monitor 服务及其 Redis、PostgreSQL 连接
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen(
+          'http://127.0.0.1:8089/health', timeout=2
+          ).close()
+
+  backup:
+    image: ${DEPLOY_BASE_REGISTRY:-}${BACKUP_IMAGE:-db-backup:v0.1.0}
+    container_name: ${SERVICE_NAME:-default_service}-backup
+    restart: always
+    volumes:
+      - ${BACKUP_DIR:-./data/backups}:/app/data/backups
+    environment:
+      DB_NAME: appdb
+      DB_USER: postgres
+      PGPASSWORD: postgres
+      DB_HOST: postgres
+      BACKUP_TIME: 0 2
+      TZ: Asia/Shanghai
+    networks:
+      - app_net
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-infra
+      # 检查 crond 是否正在运行
+      test: ["CMD-SHELL", "pgrep -x crond >/dev/null"]

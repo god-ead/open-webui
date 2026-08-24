@@ -1,0 +1,46 @@
+build_company_profile_service:
+  stage: build
+  image: docker.fzyun.io/docker:28.1.1
+
+  variables:
+    COMPANY_PROFILE_DIR: "backend/open_webui/agents/company_profile"
+    IMAGE_NAME: "$REGISTRY_URL/sales-agents/company-profile-service"
+    BASE_IMAGE_REGISTRY: "docker.fzyun.io/"
+    CUSTOM_IMAGE_TAG: ""
+
+  before_script:
+    - |
+      echo "$PRIVATE_CI_REGISTRY_PASSWORD" | docker login \
+        -u "$PRIVATE_CI_REGISTRY_USER" \
+        --password-stdin \
+        "$REGISTRY_URL" || { echo "Harbor 登录失败"; exit 1; }
+
+  script:
+    - |
+      if [ "$CI_COMMIT_BRANCH" = "main" ] && [ -n "$CUSTOM_IMAGE_TAG" ]; then
+        IMAGE_TAG="$CUSTOM_IMAGE_TAG"
+        echo "使用手动指定版本号: ${IMAGE_TAG}"
+      else
+        IMAGE_TAG="$(echo "$CI_COMMIT_SHA" | cut -c1-8)"
+        echo "使用 commit SHA 作为标签: ${IMAGE_TAG}"
+      fi
+
+      echo "开始构建企业画像镜像: ${IMAGE_NAME}:${IMAGE_TAG}"
+      DOCKER_BUILDKIT=1 docker build \
+        --build-arg "BASE_IMAGE_REGISTRY=${BASE_IMAGE_REGISTRY}" \
+        -f "${COMPANY_PROFILE_DIR}/service/Dockerfile" \
+        -t "${IMAGE_NAME}:${IMAGE_TAG}" \
+        "${COMPANY_PROFILE_DIR}" || { echo "企业画像镜像构建失败"; exit 1; }
+
+      docker push "${IMAGE_NAME}:${IMAGE_TAG}" || { echo "企业画像镜像推送失败"; exit 1; }
+
+      if [ "$CI_COMMIT_BRANCH" = "main" ] && [ -n "$CUSTOM_IMAGE_TAG" ]; then
+        docker tag "${IMAGE_NAME}:${IMAGE_TAG}" "${IMAGE_NAME}:latest"
+        docker push "${IMAGE_NAME}:latest" || { echo "推送 latest 失败"; exit 1; }
+      fi
+
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && ($CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "test" || $CI_COMMIT_BRANCH =~ /^test-.+$/)'
+      changes:
+        - backend/open_webui/agents/company_profile/**/*
+        - .gitlab-ci.yml

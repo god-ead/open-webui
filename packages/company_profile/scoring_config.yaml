@@ -1,0 +1,413 @@
+# 企业客户价值评估 - 评分配置文件
+#
+# 统一约定（避免 weight 与满分口径脱节）：
+# - 七维 max_score 均为整数，且相加 = 100。
+# - 每维 weight = 该维 max_score / 100（引擎中满分时加权分 = raw/max × weight×100 = max_score）。
+# - 维内各特征 max_score 为整数，之和 = 该维 max_score；规则 score 为整数且 ≤ 对应特征 max_score。
+#
+# 当前七维分值分配（可按业务调整，但请保持总和 100、并同步改 weight）：
+#   企业基础 35 | 业务关联 22 | 公开行为 18 | 技术环境 5 | 营销意愿 5 | 版权风险 5 | 决策链 10
+#
+# 基于易成单/难成单特征分析 v1.0
+version: "1.0"
+
+dimensions:
+  basic_attributes:
+    label: "企业基础属性"
+    weight: 0.35
+    max_score: 35
+    features:
+      listing_status:
+        label: "上市/国企/外资背景"
+        max_score: 11
+        rules:
+          - condition: "== listed"
+            score: 11
+          - condition: "== soe"
+            score: 10
+          - condition: "== foreign"
+            score: 9
+          - condition: "== group"
+            score: 6
+          - condition: "== private"
+            score: 3
+          - condition: "== sme"
+            score: 1
+        default_score: 3
+
+      industry_type:
+        label: "行业类型"
+        max_score: 9
+        rules:
+          - condition: "== consumer_brand"       # 消费品牌（汽车/家电/食品/服装/美妆等）
+            score: 9
+          - condition: "== consumer_internet"    # 互联网/电商/O2O
+            score: 9
+          - condition: "== media_game"           # 文化传媒/游戏/广告
+            score: 8
+          - condition: "== finance"              # 金融/证券/保险
+            score: 7
+          - condition: "== pharma_retail"        # 医药/大健康/零售连锁
+            score: 6
+          - condition: "== premium_consumer"     # 高端消费品（酒/奢侈品）
+            score: 6
+          - condition: "== education_tech"       # 教育/科技/软件
+            score: 5
+          - condition: "== real_estate_hotel"    # 房地产/酒店/旅游
+            score: 4
+          - condition: "== heavy_industry"       # 传统重工业/农业/基建
+            score: 2
+        default_score: 3
+
+      annual_revenue:
+        label: "年营收"
+        max_score: 6
+        rules:
+          - condition: ">= 10000000000"
+            score: 6
+          - condition: ">= 1000000000"
+            score: 5
+          - condition: ">= 100000000"
+            score: 4
+          - condition: ">= 10000000"
+            score: 2
+          - condition: "< 10000000"
+            score: 1
+        default_score: 0
+
+      region:
+        label: "总部地域"
+        max_score: 5
+        rules:
+          - condition: "in [北京,上海,广州,深圳]"
+            score: 5
+          - condition: "in [杭州,成都,南京,武汉,重庆,苏州,西安,长沙,天津,宁波,合肥,郑州]"
+            score: 4
+          - condition: "other"
+            score: 2
+        default_score: 2
+
+      employee_scale:
+        label: "员工规模"
+        max_score: 4
+        rules:
+          - condition: "> 5000"
+            score: 4
+          - condition: "> 500"
+            score: 3
+          - condition: ">= 50 and <= 500"
+            score: 2
+          - condition: ">= 10 and < 50"
+            score: 1
+          - condition: "< 10"
+            score: 0
+        default_score: 1
+
+  business_relevance:
+    label: "业务关联特征"
+    weight: 0.22
+    max_score: 22
+    features:
+      business_model:
+        label: "业务模式"
+        max_score: 9
+        rules:
+          - condition: "== b2c"
+            score: 9
+          - condition: "== b2b2c"
+            score: 7
+          - condition: "== b2b_brand"
+            score: 5
+          - condition: "== b2b"
+            score: 3
+          - condition: "== g2b"
+            score: 2
+        default_score: 2
+
+      design_positions:
+        label: "设计类岗位"
+        max_score: 4
+        rules:
+          - condition: ">= 5"
+            score: 4
+          - condition: ">= 3"
+            score: 4
+          - condition: ">= 1"
+            score: 3
+          - condition: "== 0"
+            score: 0
+        default_score: 0
+
+      brand_marketing_dept:
+        label: "品牌/市场部门"
+        max_score: 4
+        rules:
+          - condition: "== explicit"
+            score: 4
+          - condition: "== related"
+            score: 2
+          - condition: "== none"
+            score: 0
+        default_score: 1
+
+      content_output_density:
+        label: "内容产出密度"
+        max_score: 5
+        rules:
+          - condition: "== high"
+            score: 5
+          - condition: "== medium"
+            score: 3
+          - condition: "== low"
+            score: 2
+          - condition: "== none"
+            score: 0
+        default_score: 1
+
+  public_behavior:
+    label: "公开行为特征"
+    weight: 0.18
+    max_score: 18
+    features:
+      ad_activity:
+        label: "广告投放活跃度"
+        max_score: 5
+        rules:
+          - condition: "== multi_platform"
+            score: 5
+          - condition: "== single_platform"
+            score: 3
+          - condition: "== none"
+            score: 0
+        default_score: 1
+
+      social_media_activity:
+        label: "社交媒体活跃度"
+        max_score: 5
+        rules:
+          - condition: ">= 3"
+            score: 5
+          - condition: ">= 1"
+            score: 3
+          - condition: "== 0"
+            score: 0
+        default_score: 1
+
+      recent_marketing_events:
+        label: "近期营销事件"
+        max_score: 4
+        rules:
+          - condition: "== major"
+            score: 4
+          - condition: "== regular"
+            score: 2
+          - condition: "== none"
+            score: 0
+        default_score: 1
+
+      ecommerce_presence:
+        label: "电商入驻"
+        max_score: 4
+        rules:
+          - condition: ">= 3"
+            score: 4
+          - condition: ">= 1"
+            score: 2
+          - condition: "== 0"
+            score: 0
+        default_score: 1
+
+  tech_environment:
+    label: "技术环境"
+    weight: 0.05
+    max_score: 5
+    features:
+      has_app:
+        label: "已发布 APP"
+        max_score: 1
+        rules:
+          - condition: "== true"
+            score: 1
+          - condition: "== false"
+            score: 0
+        default_score: 0
+
+      has_mini_program:
+        label: "微信小程序"
+        max_score: 1
+        rules:
+          - condition: "== true"
+            score: 1
+          - condition: "== false"
+            score: 0
+        default_score: 0
+
+      has_game:
+        label: "游戏产品"
+        max_score: 1
+        rules:
+          - condition: "== true"
+            score: 1
+          - condition: "== false"
+            score: 0
+        default_score: 0
+
+      website_complexity:
+        label: "官网复杂度"
+        max_score: 2
+        rules:
+          - condition: "== custom"
+            score: 2
+          - condition: "== template"
+            score: 1
+          - condition: "== none"
+            score: 0
+        default_score: 0
+
+  marketing_intent:
+    label: "营销意愿"
+    weight: 0.05
+    max_score: 5
+    features:
+      marketing_willingness_score:
+        label: "营销意愿综合分"
+        max_score: 5
+        rules:
+          - condition: ">= 80"
+            score: 5
+          - condition: ">= 50"
+            score: 4
+          - condition: ">= 30"
+            score: 2
+          - condition: ">= 10"
+            score: 1
+          - condition: "== 0"
+            score: 0
+        default_score: 0
+
+  copyright_risk:
+    label: "版权风险敏感度"
+    weight: 0.05
+    max_score: 5
+    features:
+      font_infringement_litigation:
+        label: "字体侵权诉讼记录"
+        max_score: 2
+        rules:
+          - condition: "== true"
+            score: 2
+          - condition: "== false"
+            score: 0
+        default_score: 0
+
+      other_ip_litigation:
+        label: "其他知识产权诉讼"
+        max_score: 1
+        rules:
+          - condition: ">= 3"
+            score: 1
+          - condition: ">= 1"
+            score: 1
+          - condition: "== 0"
+            score: 0
+        default_score: 0
+
+      affiliated_infringement:
+        label: "关联企业侵权记录"
+        max_score: 1
+        rules:
+          - condition: "== true"
+            score: 1
+          - condition: "== false"
+            score: 0
+        default_score: 0
+
+      infringement_peak_period:
+        label: "行业侵权高发期"
+        max_score: 1
+        rules:
+          - condition: "== active_promotion"
+            score: 1
+          - condition: "== normal_operation"
+            score: 0
+          - condition: "== none"
+            score: 0
+        default_score: 0
+
+  decision_chain:
+    label: "决策链特征"
+    weight: 0.10
+    max_score: 10
+    features:
+      governance_structure:
+        label: "治理结构"
+        max_score: 2
+        rules:
+          - condition: "== foreign"
+            score: 2
+          - condition: "== group_subsidiary"
+            score: 2
+          - condition: "== joint_stock"
+            score: 2
+          - condition: "== limited"
+            score: 1
+          - condition: "== private_small"
+            score: 1
+          - condition: "== individual"
+            score: 0
+        default_score: 1
+
+      decision_chain_length:
+        label: "决策链长度"
+        max_score: 2
+        rules:
+          - condition: "== long"
+            score: 0
+          - condition: "== medium"
+            score: 1
+          - condition: "== short"
+            score: 2
+        default_score: 0
+
+      procurement_system:
+        label: "采购制度"
+        max_score: 1
+        rules:
+          - condition: "== true"
+            score: 1
+          - condition: "== false"
+            score: 0
+        default_score: 0
+
+      compliance_awareness:
+        label: "合规意识"
+        max_score: 5
+        rules:
+          - condition: "== high"
+            score: 5
+          - condition: "== medium"
+            score: 3
+          - condition: "== low"
+            score: 1
+        default_score: 1
+
+probability_levels:
+  high:
+    min_score: 80
+    label: "高（S级客户）"
+    suggestion: "优先重点跟进，该企业具备明确的字体版权需求和充足的付费能力，建议资源倾斜，打造标杆案例"
+  medium_high:
+    min_score: 60
+    label: "中高（A级客户）"
+    suggestion: "正常跟进，建立长期关系，针对其核心痛点（版权风险/品牌升级）制定专项方案"
+  medium:
+    min_score: 40
+    label: "中（B级客户）"
+    suggestion: "轻量维护，等待时机，可通过行业活动或内容营销保持接触"
+  low:
+    min_score: 0
+    label: "低（C级客户）"
+    suggestion: "暂缓跟进，当前时机不成熟，预算有限或决策链不透明，仅做信息收集"
+
+missing_data:
+  low_confidence_threshold: 2
