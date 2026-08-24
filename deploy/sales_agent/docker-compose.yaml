@@ -26,10 +26,7 @@ services:
   # 智能体服务
   sales-agent:
     container_name: founder-sales-agent
-    build:
-      context: ../..
-      dockerfile: services/founder_sales/Dockerfile
-    image: ${FOUNDER_SALES_IMAGE:-founder-sales-agent:dev}
+    image: ${FOUNDER_SALES_IMAGE:?FOUNDER_SALES_IMAGE is required}
     env_file:
       - .env
     environment:
@@ -60,7 +57,7 @@ services:
   # LibreChat前端
   librechat:
     container_name: founder-sales-librechat
-    image: ${LIBRACHAT_IMAGE}
+    image: ${LIBRECHAT_IMAGE:?LIBRECHAT_IMAGE is required}
     expose:
       - "3080"
     env_file:
@@ -73,7 +70,14 @@ services:
       DOMAIN_SERVER: ${PUBLIC_ORIGIN}${PUBLIC_BASE_PATH:?PUBLIC_BASE_PATH is required}
       SEARCH: false
       ENDPOINTS: custom
-      ALLOW_REGISTRATION: true
+      # 登录设置及CRM登录接入
+      ALLOW_EMAIL_LOGIN: ${ALLOW_EMAIL_LOGIN:-false}
+      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-false}
+      CRM_AES_KEY: ${CRM_AES_KEY:?CRM_AES_KEY is required}
+      CRM_AES_IV: ${CRM_AES_IV:?CRM_AES_IV is required}
+      CRM_TOKEN_MAX_AGE_SECONDS: ${CRM_TOKEN_MAX_AGE_SECONDS:-10}
+      CRM_ALLOWED_ORIGINS: ${CRM_ALLOWED_ORIGINS:?CRM_ALLOWED_ORIGINS is required}
+      CRM_AUTH_DEBUG_ERRORS: ${CRM_AUTH_DEBUG_ERRORS:-false}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET is required}
       CREDS_KEY: ${CREDS_KEY:?CREDS_KEY is required}

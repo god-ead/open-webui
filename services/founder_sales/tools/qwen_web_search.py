@@ -67,68 +67,6 @@ class WebContext(BaseModel):
     request_id: str | None = None
 
 
-def _json_messages(
-    current_input: str,
-    messages: list[dict[str, Any]],
-    knowledge_hits: list[Any],
-) -> list[dict[str, str]]:
-    """构造联网搜索决策的系统+用户消息，含输入、历史与知识命中上下文。"""
-
-    context = {
-        "current_input": current_input,
-        "history": _jsonable(messages),
-        "knowledge": _jsonable(knowledge_hits),
-    }
-    return [
-        {
-            "role": "system",
-            "content": (
-                "你是销售助手的联网决策器。根据当前输入、对话历史和内部知识命中，"
-                "仅返回 JSON：{\"need_search\":true/false,\"query\":\"...\"}。"
-                "需要最新公开信息、具体客户公开动态或内部知识不足时搜索；"
-                "私有事实不可猜测。"
-            ),
-        },
-        {"role": "user", "content": json.dumps(context, ensure_ascii=False)},
-    ]
-
-
-def _jsonable(value: Any) -> Any:
-    """递归把任意值转为 JSON 可序列化结构，兼容 Pydantic/dataclass/普通对象。"""
-
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, Mapping):
-        return {str(key): _jsonable(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple, set)):
-        return [_jsonable(item) for item in value]
-    model_dump = getattr(value, "model_dump", None)
-    if callable(model_dump):
-        return _jsonable(model_dump())
-    if is_dataclass(value):
-        return _jsonable(asdict(value))
-    attrs = {}
-    for key in ("role", "content", "text", "source_name", "chunk_id", "score"):
-        if hasattr(value, key):
-            attrs[key] = _jsonable(getattr(value, key))
-    return attrs if attrs else str(value)
-
-
-async def decide_web_search(
-    current_input: str,
-    messages: list[dict[str, Any]],
-    knowledge_hits: list[Any],
-    llm: Any,
-) -> WebDecision:
-    """对当前输入做一次模型调用，返回校验后的联网搜索决策。"""
-
-    result = await llm.complete_json(
-        _json_messages(current_input, messages, knowledge_hits),
-        WebDecision,
-    )
-    return result if isinstance(result, WebDecision) else WebDecision.model_validate(result)
-
-
 def _source_from_search_result(result: Any) -> WebSource | None:
     """从供应商元数据提取合法的绝对 HTTP(S) 来源。"""
 

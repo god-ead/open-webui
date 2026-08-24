@@ -27,9 +27,9 @@ Open WebUI ── OpenAI 兼容 ──▶ bridge/openai_chat.py
 ## 本地开发
 
 ```bash
-cd /home/zhongjinyan/project/program/open-webui/backend/open_webui/agents/founder-sales
+cd /home/zhongjinyan/project/program/open-webui/deploy/sales_agent
 cp .env.example .env   # 填入 QWEN_API_KEY / FOUNDER_SALES_API_KEY 等
-docker compose up -d --build
+docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d --build
 ```
 
 启动后服务监听 `:8050`。在本地 Open WebUI 中手动配置外部链接：
@@ -39,16 +39,16 @@ docker compose up -d --build
 | API Base URL | `http://localhost:8050/v1` |
 | API Key | `.env` 中 `FOUNDER_SALES_API_KEY` 的值 |
 
-依赖数据（RAG 知识库、embedding 模型、checkpoint）由宿主机 `/data/app/founder-sales` 挂载（见 [docker-compose.yaml](../docker-compose.yaml)）。
+依赖数据（RAG 知识库、embedding 模型、checkpoint）由 `FOUNDER_SALES_DATA_DIR` 指定的宿主机目录挂载（见 [`deploy/sales_agent/docker-compose.yaml`](../../../deploy/sales_agent/docker-compose.yaml)）。
 
-## 远程部署（test 分支）
+## 远程部署（main/test 分支）
 
-镜像由根仓库 CI 构建推送到 Harbor（`$REGISTRY_URL/sales-agents/founder-sales`），远程 compose 以浮动 tag 拉取：
+镜像由根仓库 CI 构建推送到 Harbor（`$REGISTRY_URL/sales-agents/founder-sales`），远程 Compose 从 Harbor 拉取运维在 `.env` 中选定的 tag：
 
 - `test` 分支提交 → 推送 `:test` tag（远程测试环境固定引用）
 - `main` 分支手动指定版本 → 推送版本号 + `:latest`
 
-远程测试环境的双容器（open-webui + founder-sales）编排见 `program/open-webui/docker-compose.yaml`，本 agent 容器挂载 `/data/app/founder-sales:/app/data/runtime`。
+远程环境编排见 `deploy/sales_agent/docker-compose.yaml`；基础 Compose 不包含 `build`，部署时只拉取镜像。
 
 ## 配置项
 
@@ -88,12 +88,6 @@ docker compose up -d --build
 - `X-User-Id`（必需）
 - `X-Conversation-Id`（必需）
 - `Idempotency-Key`（必需）：本轮消息 ID；已完成轮次直接回放，`failed`/进程重启遗留的 `in_progress` 可重试
-
-## 测试
-
-```bash
-pytest tests/          # 需要依赖环境（langgraph/httpx 等）
-```
 
 ## 目录说明
 
