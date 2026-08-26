@@ -83,17 +83,23 @@ MongoDB 使用两个网关专用集合：
 cd deploy/sales_agent
 cp .env.example .env
 # 填写密钥和服务配置
-docker compose config
-docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d --build
+docker compose --env-file .env \
+  -f docker-compose.yaml \
+  -f docker-compose.dev.yaml \
+  config
+docker compose --env-file .env \
+  -f docker-compose.yaml \
+  -f docker-compose.dev.yaml \
+  up -d --build
 ```
 
 只构建本服务镜像：
 
 ```bash
-docker compose \
+docker compose --env-file .env \
   -f docker-compose.yaml \
   -f docker-compose.dev.yaml \
-  build librechat
+  build founder-sales-agent founder-sales-librechat
 ```
 
 ## 管理员角色
@@ -109,4 +115,4 @@ docker compose exec librechat \
 
 ## 文件说明
 
-详见 [docs/FILE_STRUCTURE.md](docs/FILE_STRUCTURE.md)。认证数据链路、错误语义和部署步骤见 [`deploy/sales_agent/docs`](../../deploy/sales_agent/docs)。
+详见 [docs/FILE_STRUCTURE.md](docs/FILE_STRUCTURE.md)。

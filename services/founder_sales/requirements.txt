@@ -3,6 +3,7 @@
 --extra-index-url https://download.pytorch.org/whl/cpu
 fastapi==0.138.2
 httpx==0.28.1
+openai==1.109.1
 jsonschema==4.23.0
 langgraph==1.2.7
 langgraph-checkpoint-sqlite==3.1.0

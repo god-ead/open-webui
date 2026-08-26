@@ -39,6 +39,7 @@ class Settings:
     qwen_search_retry_count: int = 2
     qwen_agent_model: str = "qwen3.7-plus"
     qwen_fallback_model: str = "qwen3.5-plus"
+    qwen_task_model_lite: str = ""
     qwen_timeout_seconds: int = 60
 
     company_profile_llm_api_key: str = ""
@@ -62,8 +63,7 @@ class Settings:
     @classmethod
     def from_env(cls) -> Settings:
         """从文档约定的环境变量构建配置。"""
-
-        return cls(
+        settings = cls(
             app_bind_host=_env_str("APP_BIND_HOST", cls.app_bind_host),
             app_port=_env_int("APP_PORT", cls.app_port),
             langgraph_api_key=_env_str(
@@ -87,6 +87,7 @@ class Settings:
             qwen_fallback_model=_env_str(
                 "QWEN_FALLBACK_MODEL", cls.qwen_fallback_model
             ),
+            qwen_task_model_lite=_env_str("QWEN_TASK_MODEL_LITE", "").strip(),
             qwen_timeout_seconds=_env_int(
                 "QWEN_TIMEOUT_SECONDS", cls.qwen_timeout_seconds
             ),
@@ -118,3 +119,6 @@ class Settings:
             rag_candidate_k=_env_int("RAG_CANDIDATE_K", cls.rag_candidate_k),
             rag_top_k=_env_int("RAG_TOP_K", cls.rag_top_k),
         )
+        if not settings.qwen_task_model_lite:
+            raise ValueError("QWEN_TASK_MODEL_LITE is required")
+        return settings
