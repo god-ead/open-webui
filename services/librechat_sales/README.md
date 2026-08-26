@@ -90,10 +90,10 @@ docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d --build
 只构建本服务镜像：
 
 ```bash
-docker build \
-  --build-arg LIBRECHAT_BASE_IMAGE=registry.librechat.ai/danny-avila/librechat:v0.8.7 \
-  -t founder-sales-librechat:dev \
-  services/librechat_sales
+docker compose \
+  -f docker-compose.yaml \
+  -f docker-compose.dev.yaml \
+  build librechat
 ```
 
 ## 管理员角色

@@ -67,7 +67,7 @@ endpoints:
     - name: "Founder Sales"
       modelDisplayLabel: "方正营销智能体"
       apiKey: "${FOUNDER_SALES_API_KEY}"
-      baseURL: "http://sales-agent:8050/v1"
+      baseURL: "http://founder-sales-agent:8050/v1"
       models:
         default:
           - "founder-sales-assistant"
@@ -75,5 +75,8 @@ endpoints:
       headers:
         X-User-Id: "{{LIBRECHAT_USER_ID}}"
         X-Conversation-Id: "{{LIBRECHAT_BODY_CONVERSATIONID}}"
-        Idempotency-Key: "{{LIBRECHAT_BODY_MESSAGEID}}"
-      titleConvo: false
+      customParams:
+        reasoningKey: reasoning_content
+      titleConvo: true
+      titleModel: "task-model-lite"
+      titleTiming: final
