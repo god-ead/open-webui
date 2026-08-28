@@ -16,6 +16,11 @@
       ├── 联网搜索 Tool
       ├── 销售知识库 Tool
       └── 企业画像 Tool
+
+管理员内网
+  → Nginx（独立管理端口，CIDR 白名单）
+  → LibreChat Admin Panel
+  → LibreChat Admin API
 ```
 
 Nginx 通过 `/sales-agent` 暴露 LibreChat 页面、接口和流式连接。LibreChat 通过 OpenAI 兼容接口调用智能体；Bridge 负责鉴权和协议转换；`LangGraphRuntime` 管理 checkpoint、会话锁与消息幂等；主 Agent 负责选择 Tool 和生成回答。
@@ -87,13 +92,34 @@ docker compose --env-file .env \
 - `FOUNDER_SALES_API_KEY`：LibreChat 调用智能体的 Bearer Key。
 - `QWEN_API_KEY` 与 `COMPANY_PROFILE_LLM_API_KEY`：智能体和画像 Tool 的 LLM 密钥。
 - `JWT_SECRET`、`JWT_REFRESH_SECRET`、`CREDS_KEY`、`CREDS_IV`：LibreChat 必需密钥。
-- `FOUNDER_SALES_DATA_DIR`：checkpoint、知识库和模型根目录。
+- `ADMIN_BIND_IP`、`ADMIN_PANEL_PORT`、`ADMIN_ALLOWED_CIDR`：Admin Panel 内网监听与来源限制。
+- `ADMIN_PANEL_SESSION_SECRET`：Admin Panel 会话加密密钥。
+- `FOUNDER_SALES_DATA_DIR`：checkpoint根目录。
 
 默认入口为：
 
 ```text
 http://服务器地址:3030/sales-agent/
 ```
+
+本地管理员通过 `docker compose exec founder-sales-librechat /app/crm-auth/init-admin.sh` 手动创建或提升。默认只启动正常服务，Admin Panel 由管理员按需启停：
+
+```bash
+# 启动正常服务，默认不启动管理员面板
+docker compose up -d
+
+# 按需启动管理员面板
+docker compose up -d founder-sales-admin-panel
+
+# 使用完成后仅关闭管理员面板
+docker compose stop founder-sales-admin-panel
+
+# 关闭整套服务；管理员面板若已启动则先关闭面板
+docker compose stop founder-sales-admin-panel
+docker compose down
+```
+
+启动后通过 `http://ADMIN_BIND_IP:3031/` 访问，仅允许 `ADMIN_ALLOWED_CIDR` 指定的来源。单独启停 Admin Panel 不影响销售智能体的正常服务。
 
 常用检查命令：
 
@@ -126,7 +152,7 @@ docker compose --env-file .env -f docker-compose.yaml ps
 
 ## 数据与发布
 
-营销智能体通过 `FOUNDER_SALES_DATA_DIR` 持久化 checkpoint、知识库和模型；LibreChat 分别持久化 MongoDB、上传与日志。企业画像服务用 `DATA_DIR` 管理 PDF、备份和日志，并用 Compose volume 保存数据库数据。
+营销智能体通过 `FOUNDER_SALES_DATA_DIR` 持久化 checkpoint；LibreChat 分别持久化 MongoDB、上传与日志。企业画像服务用 `DATA_DIR` 管理 PDF、备份和日志，并用 Compose volume 保存数据库数据。
 
 修改 `services` 或共享源码后由 CI 构建并推送镜像。正式和测试环境在 Harbor 中选定标签、更新 `.env` 后执行 `docker compose pull` 与 `docker compose up -d --no-build`；只有本地开发叠加 `docker-compose.dev.yaml` 并使用 `--build`。两套部署不要复用项目名或数据目录。
 

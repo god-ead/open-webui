@@ -1,6 +1,9 @@
 stages:
   - build
 
+variables:
+  REGISTRY_URL: "172.19.52.215:9100"
+
 workflow:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push" && ($CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "test" || $CI_COMMIT_BRANCH =~ /^test-.+$/)'

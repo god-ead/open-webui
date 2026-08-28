@@ -14,7 +14,7 @@ server {
 
     # CRM widget 的默认根地址直接进入认证启动页；成功后再跳转 LibreChat 会话。
     location = ${PUBLIC_BASE_PATH}/ {
-        proxy_pass http://librechat:3080/api/auth/crm/entry;
+        proxy_pass http://founder-sales-librechat:3080/api/auth/crm/entry;
         proxy_http_version 1.1;
 
         proxy_set_header Host $http_host;
@@ -24,8 +24,17 @@ server {
         proxy_set_header X-Forwarded-Prefix ${PUBLIC_BASE_PATH};
     }
 
+    # 管理认证与管理 API 仅允许 Admin Panel 通过容器内网络访问。
+    location = ${PUBLIC_BASE_PATH}/api/admin {
+        return 404;
+    }
+
+    location ^~ ${PUBLIC_BASE_PATH}/api/admin/ {
+        return 404;
+    }
+
     location ^~ ${PUBLIC_BASE_PATH}/ {
-        proxy_pass http://librechat:3080/;
+        proxy_pass http://founder-sales-librechat:3080/;
         proxy_http_version 1.1;
 
         proxy_set_header Host $http_host;
@@ -48,5 +57,32 @@ server {
     location / {
         default_type text/plain;
         return 404 "Founder-Sales-Agent is available at /sales-agent\n";
+    }
+}
+
+server {
+    listen 8081;
+    server_name _;
+    absolute_redirect off;
+
+    # Admin Panel 按需启动，延迟解析避免其缺席时阻断 Nginx 启动。
+    resolver 127.0.0.11 valid=10s ipv6=off;
+    set $admin_panel_upstream http://founder-sales-admin-panel:3000;
+
+    # 管理端口先按来源网段过滤，LibreChat 再校验本地 ADMIN 身份。
+    location / {
+        allow ${ADMIN_ALLOWED_CIDR};
+        deny all;
+
+        proxy_pass $admin_panel_upstream;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
     }
 }

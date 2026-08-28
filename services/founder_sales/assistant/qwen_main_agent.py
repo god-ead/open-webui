@@ -13,7 +13,7 @@ from time import perf_counter
 from typing import Any
 from urllib.parse import urlsplit
 
-import httpx
+from openai import AsyncOpenAI
 
 from founder_sales.assistant.config import Settings
 
@@ -67,6 +67,12 @@ TOOL_SCHEMAS = [
         parameter_name="query",
     ),
     _tool_schema(
+        "generate_visit_plan",
+        "根据客户、拜访对象、目标和合作背景生成完整标准客户拜访计划；仅在用户明确要求完整计划时调用。",
+        "包含客户、拜访对象及角色、拜访目标、历史合作和项目背景等已知信息的自包含拜访上下文。",
+        parameter_name="visit_context",
+    ),
+    _tool_schema(
         "generate_company_profile",
         "为指定企业生成完整企业画像和营销价值分析；仅在用户明确要求企业画像、企业分析、客户画像或营销价值研判时调用。",
         "需要生成企业画像的完整企业名称。",
@@ -92,12 +98,12 @@ class _PreparedCall:
     error: str | None = None
 
 
-def _chat_completions_url(base_url: str) -> str:
-    """从任意 DashScope base URL 构造 OpenAI 兼容 Chat Completions 地址。"""
+def qwen_openai_base_url(base_url: str) -> str:
+    """从任意 DashScope base URL 构造 OpenAI 兼容接口根地址。"""
     parsed = urlsplit(base_url)
     if not parsed.scheme or not parsed.netloc:
         raise ValueError("Qwen base URL is invalid")
-    return f"{parsed.scheme}://{parsed.netloc}/compatible-mode/v1/chat/completions"
+    return f"{parsed.scheme}://{parsed.netloc}/compatible-mode/v1"
 
 
 def _content_text(content: Any) -> str:
@@ -172,6 +178,11 @@ def _tool_result_for_model(
             ],
             "error": result.get("error"),
         }
+    if tool_name == "generate_visit_plan":
+        return {
+            key: result.get(key)
+            for key in ("plan", "model", "used_fallback")
+        }
     if tool_name == "generate_company_profile":
         return {
             key: result.get(key)
@@ -206,53 +217,26 @@ class QwenMainAgent:
     def __init__(
         self,
         settings: Settings,
-        client: httpx.AsyncClient,
+        client: AsyncOpenAI,
         web_search: Any,
         knowledge: Any,
+        visit_plan: Any,
         company_profile: Any,
     ) -> None:
-        """注入模型连接、两个检索工具和企业画像 Tool。"""
+        """注入模型连接、检索、拜访计划和企业画像 Tool。"""
         self.settings = settings
         self.client = client
         self.web_search = web_search
         self.knowledge = knowledge
+        self.visit_plan = visit_plan
         self.company_profile = company_profile
-        self.url = _chat_completions_url(settings.qwen_base_url)
-        self.headers = {
-            "Authorization": f"Bearer {settings.qwen_api_key}",
-            "Content-Type": "application/json",
-        }
 
     async def _deltas(self, payload: dict[str, Any]) -> AsyncIterator[Mapping[str, Any]]:
-        """调用 Qwen Chat Completions 并产出 SSE delta。"""
-        async with self.client.stream(
-            "POST",
-            self.url,
-            headers=self.headers,
-            json=payload,
-            timeout=self.settings.qwen_timeout_seconds,
-        ) as response:
-            response.raise_for_status()
-            async for line in response.aiter_lines():
-                if not line.startswith("data:"):
-                    continue
-                data = line[5:].strip()
-                if not data or data == "[DONE]":
-                    continue
-                try:
-                    event = json.loads(data)
-                except json.JSONDecodeError as exc:
-                    raise ValueError("invalid Qwen SSE payload") from exc
-                choices = event.get("choices") if isinstance(event, Mapping) else None
-                if not isinstance(choices, Sequence) or not choices:
-                    error = event.get("error") if isinstance(event, Mapping) else None
-                    if error:
-                        raise RuntimeError(str(error))
-                    continue
-                choice = choices[0]
-                delta = choice.get("delta") if isinstance(choice, Mapping) else None
-                if isinstance(delta, Mapping):
-                    yield delta
+        """通过 OpenAI SDK 调用 Qwen，并产出业务层使用的增量字典。"""
+        stream = await self.client.chat.completions.create(**payload)
+        async for chunk in stream:
+            if chunk.choices:
+                yield chunk.choices[0].delta.model_dump(exclude_none=True)
 
     async def _deltas_with_fallback(
         self, payload: dict[str, Any]
@@ -304,6 +288,7 @@ class QwenMainAgent:
         parameters = {
             "web_search": "query",
             "search_sales_knowledge": "query",
+            "generate_visit_plan": "visit_context",
             "generate_company_profile": "company_name",
         }
         for call in calls:
@@ -370,6 +355,8 @@ class QwenMainAgent:
                         "hits": [asdict(hit) for hit in hits],
                         "error": None,
                     }
+                elif call.name == "generate_visit_plan":
+                    result = await self.visit_plan.generate(prepared.query)
                 elif call.name == "generate_company_profile":
                     result = await self.company_profile.generate(prepared.query)
                 else:
@@ -395,7 +382,7 @@ class QwenMainAgent:
     async def stream(
         self,
         messages: list[dict[str, Any]],
-    ) -> AsyncIterator[str | dict[str, str]]:
+    ) -> AsyncIterator[str | dict[str, Any]]:
         """流式运行单轮主 Agent，最多执行一轮 Tool Call。"""
         # 注入固定时区当天日期，避免模型按知识截止时间补全查询中的年份
         conversation = [
@@ -418,6 +405,9 @@ class QwenMainAgent:
         calls: dict[int, _ToolCall] = {}
         direct_answer = ""
         async for delta in self._deltas_with_fallback(self._payload(conversation, with_tools=True)):
+            reasoning = _content_text(delta.get("reasoning_content"))
+            if reasoning:
+                yield {"type": "reasoning", "content": reasoning}
             fragments = delta.get("tool_calls")
             if fragments:
                 if direct_answer:
@@ -436,18 +426,22 @@ class QwenMainAgent:
 
         ordered_calls = [calls[index] for index in sorted(calls)]
         prepared = self._prepare_calls(ordered_calls)
-        yielded_tools: set[str] = set()
         for item in prepared:
-            if item.error is not None or item.call.name in yielded_tools:
-                continue
-            yielded_tools.add(item.call.name)
-            description = {
-                "web_search": "正在联网搜索",
-                "search_sales_knowledge": "正在查询销售知识库",
-                "generate_company_profile": "正在生成企业画像",
-            }[item.call.name]
-            yield {"type": "status", "description": description}
+            yield {
+                "type": "tool_start",
+                "call_id": item.call.call_id,
+                "name": item.call.name,
+                "summary": _tool_summary(item, started=True),
+            }
         results = await asyncio.gather(*(self._execute(item) for item in prepared))
+        for item, result in zip(prepared, results):
+            yield {
+                "type": "tool_end",
+                "call_id": item.call.call_id,
+                "name": item.call.name,
+                "summary": _tool_summary(item, started=False, result=result),
+                "success": result.get("ok") is not False,
+            }
 
         profile_reports = [
             (
@@ -524,6 +518,9 @@ class QwenMainAgent:
             async for delta in self._deltas_with_fallback(
                 self._payload(final_messages, with_tools=False)
             ):
+                reasoning = _content_text(delta.get("reasoning_content"))
+                if reasoning:
+                    yield {"type": "reasoning", "content": reasoning}
                 if delta.get("tool_calls"):
                     raise RuntimeError(
                         "Qwen requested a tool after the tool budget was closed"
@@ -561,7 +558,6 @@ class QwenMainAgent:
             )
             final_answer += report
             yield report
-
         web_errors = [
             result.get("error")
             for item, result in zip(prepared, results)
@@ -577,4 +573,37 @@ class QwenMainAgent:
             yield error_suffix
         logger.info("%s model response phase=final body=%s", AGENT_LOG, final_answer)
 
-__all__ = ["QwenMainAgent", "TOOL_SCHEMAS"]
+
+def _tool_summary(
+    item: _PreparedCall,
+    *,
+    started: bool,
+    result: Mapping[str, Any] | None = None,
+) -> str:
+    """生成不包含原始 Tool 返回值的前端过程摘要。"""
+
+    labels = {
+        "web_search": "联网搜索",
+        "search_sales_knowledge": "销售知识库查询",
+        "generate_visit_plan": "拜访计划准备",
+        "generate_company_profile": "企业画像生成",
+    }
+    label = labels.get(item.call.name, "工具调用")
+    if started:
+        if item.call.name == "generate_company_profile":
+            return (
+                f"\n\n正在生成「{item.query}」的完整企业画像，通常需要 2–4 分钟；"
+                "\n企业信息较复杂时可能更久。请耐心等待，完成后将自动展示结果。"
+            )
+        return f"\n\n正在{label}：{item.query}" if item.query else f"正在{label}"
+    if result is None or result.get("ok") is False:
+        return f"{label}失败"
+    if item.call.name == "web_search":
+        count = len(result.get("sources") or [])
+        return f"{label}完成：找到 {count} 条相关来源"
+    if item.call.name == "search_sales_knowledge":
+        count = len(result.get("hits") or [])
+        return f"{label}完成：命中 {count} 条内容"
+    return f"{label}完成"
+
+__all__ = ["QwenMainAgent", "TOOL_SCHEMAS", "qwen_openai_base_url"]

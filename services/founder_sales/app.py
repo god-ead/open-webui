@@ -12,13 +12,23 @@ from company_profile.application import (
 )
 from fastapi import FastAPI
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from openai import AsyncOpenAI
 
 from founder_sales.assistant.config import Settings
+from founder_sales.assistant.qwen_main_agent import (
+    QwenMainAgent,
+    qwen_openai_base_url,
+)
+from founder_sales.assistant.qwen_task_model import QwenTaskModel
 from founder_sales.bridge import router as openai_router
 from founder_sales.langgraph_runtime import LangGraphRuntime
 from founder_sales.main_agent_graph import build_main_agent_graph
-from founder_sales.assistant.qwen_main_agent import QwenMainAgent
-from founder_sales.tools import CompanyProfileTool, KnowledgeService, QwenWebSearch
+from founder_sales.tools import (
+    CompanyProfileTool,
+    KnowledgeService,
+    QwenWebSearch,
+    VisitPlanTool,
+)
 
 
 @asynccontextmanager
@@ -32,10 +42,20 @@ async def lifespan(service: FastAPI):
     async with AsyncSqliteSaver.from_conn_string(str(checkpoint_path)) as saver:
         await saver.setup()
         settings = Settings.from_env()
-        client = httpx.AsyncClient(timeout=settings.business_timeout_seconds)
+        qwen_base_url = qwen_openai_base_url(settings.qwen_base_url)
+        http_client = httpx.AsyncClient(
+            timeout=settings.business_timeout_seconds
+        )
+        qwen_client = AsyncOpenAI(
+            api_key=settings.qwen_api_key,
+            base_url=qwen_base_url,
+            timeout=settings.qwen_timeout_seconds,
+            max_retries=0,
+        )
         try:
             knowledge = await asyncio.to_thread(KnowledgeService.load, settings)
-            web_search = QwenWebSearch(settings, client)
+            web_search = QwenWebSearch(settings, http_client)
+            visit_plan = VisitPlanTool(settings, qwen_client, knowledge)
             company_profile = CompanyProfileTool(
                 CompanyProfileService(
                     CompanyProfileConfig(
@@ -48,20 +68,22 @@ async def lifespan(service: FastAPI):
                     )
                 )
             )
-            graph = build_main_agent_graph(
-                saver,
-                QwenMainAgent(
-                    settings,
-                    client,
-                    web_search,
-                    knowledge,
-                    company_profile,
-                ),
+            agent = QwenMainAgent(
+                settings,
+                qwen_client,
+                web_search,
+                knowledge,
+                visit_plan,
+                company_profile,
             )
+            task_model = QwenTaskModel(settings, qwen_client)
+            graph = build_main_agent_graph(saver, agent)
             service.state.langgraph_runtime = LangGraphRuntime(graph)
+            service.state.qwen_task_model = task_model
             yield
         finally:
-            await client.aclose()
+            await qwen_client.close()
+            await http_client.aclose()
 
 
 app = FastAPI(lifespan=lifespan)

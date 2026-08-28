@@ -28,6 +28,8 @@ build_founder_sales:
       DOCKER_BUILDKIT=1 docker build \
         -f "${SERVICE_DIR}/Dockerfile" \
         -t "${IMAGE_NAME}:${IMAGE_TAG}" \
+        --secret id=minio_access_key,env=MINIO_ACCESS_KEY \
+        --secret id=minio_secret_key,env=MINIO_SECRET_KEY \
         . || { echo "founder-sales 镜像构建失败"; exit 1; }
 
       docker push "${IMAGE_NAME}:${IMAGE_TAG}" || { echo "镜像推送失败"; exit 1; }
