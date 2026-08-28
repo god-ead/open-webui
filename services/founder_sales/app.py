@@ -22,6 +22,7 @@ from founder_sales.assistant.qwen_main_agent import (
 from founder_sales.assistant.qwen_task_model import QwenTaskModel
 from founder_sales.bridge import router as openai_router
 from founder_sales.langgraph_runtime import LangGraphRuntime
+from founder_sales.logging_config import setup_logging
 from founder_sales.main_agent_graph import build_main_agent_graph
 from founder_sales.tools import (
     CompanyProfileTool,
@@ -29,6 +30,8 @@ from founder_sales.tools import (
     QwenWebSearch,
     VisitPlanTool,
 )
+
+setup_logging()
 
 
 @asynccontextmanager
