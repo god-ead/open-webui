@@ -11,6 +11,7 @@ services:
       ADMIN_ALLOWED_CIDR: ${ADMIN_ALLOWED_CIDR:?ADMIN_ALLOWED_CIDR is required}
     volumes:
       - ./nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ${NGINX_LOGS_DIR:-./data/logs/nginx}:/data/app/logs
     depends_on:
       founder-sales-librechat:
         condition: service_healthy
@@ -38,9 +39,11 @@ services:
       QWEN_API_KEY: ${QWEN_API_KEY:?QWEN_API_KEY is required}
       QWEN_TASK_MODEL_LITE: ${QWEN_TASK_MODEL_LITE:?QWEN_TASK_MODEL_LITE is required}
       COMPANY_PROFILE_LLM_API_KEY: ${COMPANY_PROFILE_LLM_API_KEY:?COMPANY_PROFILE_LLM_API_KEY is required}
+      LOG_DIR: /data/app/logs
     volumes:
       # 宿主机挂载的 checkpoint 根目录
       - ${FOUNDER_SALES_DATA_DIR:-./data/founder-sales}:/app/data/runtime
+      - ${FOUNDER_SALES_LOGS_DIR:-./data/logs/founder-sales-agent}:/data/app/logs
     expose:
       - "8050"
     networks:
@@ -85,10 +88,13 @@ services:
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET is required}
       CREDS_KEY: ${CREDS_KEY:?CREDS_KEY is required}
       CREDS_IV: ${CREDS_IV:?CREDS_IV is required}
+      LIBRECHAT_LOG_DIR: /data/app/logs
+      LOG_TO_FILE: "true"
+      DEBUG_LOGGING: "true"
     volumes:
       - ./librechat.yaml:/app/librechat.yaml:ro
       - ${LIBRACHAT_UPLOADS_DIR:-./data/uploads}:/app/uploads
-      - ${LIBRECHAT_LOGS_DIR:-./data/logs}:/app/logs
+      - ${LIBRECHAT_LOGS_DIR:-./data/logs/librechat}:/data/app/logs
     depends_on:
       founder-sales-librechat-mongodb:
         condition: service_healthy
@@ -138,9 +144,15 @@ services:
   founder-sales-librechat-mongodb:
     container_name: founder-sales-librechat-mongodb
     image: ${MONGO_IMAGE:-mongo:8.0}
-    command: mongod --noauth
+    command:
+      - mongod
+      - --noauth
+      - --logpath
+      - /data/app/logs/mongodb.log
+      - --logappend
     volumes:
       - ${MONGO_DATA_DIR:-./data/mongodb}:/data/db
+      - ${MONGODB_LOGS_DIR:-./data/logs/mongodb}:/data/app/logs
     healthcheck:
       test:
         - CMD

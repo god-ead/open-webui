@@ -3,6 +3,9 @@ map $http_upgrade $connection_upgrade {
     '' close;
 }
 
+access_log /data/app/logs/access.log;
+error_log /data/app/logs/error.log;
+
 server {
     listen 8080;
     server_name _;
