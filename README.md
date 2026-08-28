@@ -16,6 +16,11 @@
       ├── 联网搜索 Tool
       ├── 销售知识库 Tool
       └── 企业画像 Tool
+
+管理员内网
+  → Nginx（独立管理端口，CIDR 白名单）
+  → LibreChat Admin Panel
+  → LibreChat Admin API
 ```
 
 Nginx 通过 `/sales-agent` 暴露 LibreChat 页面、接口和流式连接。LibreChat 通过 OpenAI 兼容接口调用智能体；Bridge 负责鉴权和协议转换；`LangGraphRuntime` 管理 checkpoint、会话锁与消息幂等；主 Agent 负责选择 Tool 和生成回答。
@@ -87,6 +92,8 @@ docker compose --env-file .env \
 - `FOUNDER_SALES_API_KEY`：LibreChat 调用智能体的 Bearer Key。
 - `QWEN_API_KEY` 与 `COMPANY_PROFILE_LLM_API_KEY`：智能体和画像 Tool 的 LLM 密钥。
 - `JWT_SECRET`、`JWT_REFRESH_SECRET`、`CREDS_KEY`、`CREDS_IV`：LibreChat 必需密钥。
+- `ADMIN_BIND_IP`、`ADMIN_PANEL_PORT`、`ADMIN_ALLOWED_CIDR`：Admin Panel 内网监听与来源限制。
+- `ADMIN_PANEL_SESSION_SECRET`：Admin Panel 会话加密密钥。
 - `FOUNDER_SALES_DATA_DIR`：checkpoint、知识库和模型根目录。
 
 默认入口为：
@@ -94,6 +101,14 @@ docker compose --env-file .env \
 ```text
 http://服务器地址:3030/sales-agent/
 ```
+
+本地管理员通过 `docker compose exec founder-sales-librechat /app/crm-auth/init-admin.sh` 手动创建或提升。Admin Panel 不会随普通 `docker compose up -d` 启动；需要时由管理员在主服务运行后显式指定该服务：
+
+```bash
+docker compose up -d founder-sales-admin-panel
+```
+
+启动后通过 `http://ADMIN_BIND_IP:3031/` 访问，仅允许 `ADMIN_ALLOWED_CIDR` 指定的来源。
 
 常用检查命令：
 

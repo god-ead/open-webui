@@ -5,8 +5,10 @@ services:
     image: ${NGINX_IMAGE:-nginx:1.27-alpine}
     ports:
       - "${SALES_AGENT_PORT:-3030}:8080"
+      - "${ADMIN_BIND_IP:?ADMIN_BIND_IP is required}:${ADMIN_PANEL_PORT:-3031}:8081"
     environment:
       PUBLIC_BASE_PATH: ${PUBLIC_BASE_PATH:?PUBLIC_BASE_PATH is required}
+      ADMIN_ALLOWED_CIDR: ${ADMIN_ALLOWED_CIDR:?ADMIN_ALLOWED_CIDR is required}
     volumes:
       - ./nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
     depends_on:
@@ -109,6 +111,29 @@ services:
       timeout: 5s
       start_period: 30s
       retries: 5
+
+  # LibreChat 独立管理面板；仅通过 Nginx 的内网管理端口访问。
+  founder-sales-admin-panel:
+    profiles:
+      - admin
+    container_name: founder-sales-admin-panel
+    image: ${ADMIN_PANEL_IMAGE:?ADMIN_PANEL_IMAGE is required}
+    environment:
+      PORT: 3000
+      SESSION_SECRET: ${ADMIN_PANEL_SESSION_SECRET:?ADMIN_PANEL_SESSION_SECRET is required}
+      API_SERVER_URL: http://founder-sales-librechat:3080
+      VITE_API_BASE_URL: ${PUBLIC_ORIGIN}${PUBLIC_BASE_PATH:?PUBLIC_BASE_PATH is required}
+      ADMIN_SSO_ONLY: "false"
+      ADMIN_SSO_ENABLED: "false"
+      SESSION_COOKIE_SECURE: "false"
+    expose:
+      - "3000"
+    depends_on:
+      founder-sales-librechat:
+        condition: service_healthy
+    networks:
+      - sales_agent_net
+    restart: unless-stopped
 
   founder-sales-librechat-mongodb:
     container_name: founder-sales-librechat-mongodb

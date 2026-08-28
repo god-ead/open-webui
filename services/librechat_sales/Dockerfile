@@ -9,10 +9,14 @@ COPY api/server/services/crmAuthCore.js /app/api/server/services/crmAuthCore.js
 COPY api/server/services/CrmAuthService.js /app/api/server/services/CrmAuthService.js
 COPY api/server/controllers/auth/CrmAuthController.js /app/api/server/controllers/auth/CrmAuthController.js
 COPY crm-auth/set-role.js /app/crm-auth/set-role.js
+COPY crm-auth/init-admin.js /app/crm-auth/init-admin.js
+COPY crm-auth/init-admin.sh /app/crm-auth/init-admin.sh
 COPY client/crm-entry-redirect.js /app/client/dist/crm-entry-redirect.js
 COPY scripts/patch-librechat.js /tmp/patch-librechat.js
 
 # 构建期定点接入 CRM 路由与入口脚本；目标版本不匹配时直接令镜像构建失败。
-RUN node /tmp/patch-librechat.js && rm /tmp/patch-librechat.js
+RUN node /tmp/patch-librechat.js \
+    && chmod 755 /app/crm-auth/init-admin.sh \
+    && rm /tmp/patch-librechat.js
 
 USER node

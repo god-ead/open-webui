@@ -17,6 +17,8 @@ librechat_sales/
 ├── client/
 │   └── crm-entry-redirect.js          # 正式环境原生登录页入口引导
 ├── crm-auth/
+│   ├── init-admin.sh                  # 本地管理员初始化命令 interface
+│   ├── init-admin.js                  # 账号创建、身份校验与 ADMIN 授权
 │   └── set-role.js                    # CRM userId 对应平台角色运维命令
 ├── scripts/
 │   └── patch-librechat.js             # LibreChat v0.8.7 构建产物定点补丁
@@ -51,6 +53,8 @@ librechat_sales/
 |---|---|
 | `Dockerfile` | 把自维护代码覆盖到上游镜像，执行定点补丁后恢复 `node` 用户 |
 | `patch-librechat.js` | 精确注册路由、注入入口脚本、修改用户名称展示并同步压缩资源 |
+| `init-admin.sh` | 读取环境变量或交互输入本地管理员凭据，不回显密码 |
+| `init-admin.js` | 按 Email 幂等创建或提升本地管理员，拒绝修改外部身份 |
 | `set-role.js` | 沿 `crmUserId → libreChatUserId` 映射设置 `ADMIN/USER`，不使用姓名授权 |
 | `.gitlab-ci.yml` | 按分支和版本规则构建、标记并推送镜像 |
 
@@ -61,7 +65,8 @@ deploy/sales_agent/docker-compose.yaml
   ├── 构建本服务 Dockerfile
   ├── 注入认证和 LibreChat 环境变量
   ├── 挂载 deploy/sales_agent/librechat.yaml
-  └── 连接 librechat-mongodb 与 founder_sales
+  ├── 连接 librechat-mongodb 与 founder_sales
+  └── 按需运行独立 Admin Panel，并由 Nginx 暴露受限的管理端口
 ```
 
 本服务不包含 `package.json`：运行依赖由 LibreChat 基础镜像提供，自维护脚本和测试只使用 Node.js 标准库。

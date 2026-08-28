@@ -72,6 +72,11 @@ MongoDB 使用两个网关专用集合：
 | `MONGO_URI` | LibreChat 与认证映射使用的 MongoDB |
 | `JWT_SECRET` / `JWT_REFRESH_SECRET` | LibreChat 原生会话密钥 |
 | `CREDS_KEY` / `CREDS_IV` | LibreChat 凭据加密配置 |
+| `ADMIN_PANEL_IMAGE` | 固定 revision 的 LibreChat Admin Panel 镜像 |
+| `ADMIN_PANEL_SESSION_SECRET` | Admin Panel 会话加密密钥，至少 32 字符 |
+| `ADMIN_BIND_IP` / `ADMIN_PANEL_PORT` | 管理端口绑定的宿主机内网地址与端口 |
+| `ADMIN_ALLOWED_CIDR` | Nginx 允许访问管理端口的单个 IP 或 CIDR |
+| `LIBRECHAT_ADMIN_EMAIL` / `LIBRECHAT_ADMIN_PASSWORD` | 可选的本地管理员初始化凭据 |
 
 开发环境可将 Email 登录和注册同时设为 `true`；正式环境必须同时设为 `false`，用户只从 CRM 进入。
 
@@ -104,10 +109,27 @@ docker compose --env-file .env \
 
 ## 管理员角色
 
-CRM `roleId` 与 LibreChat `ADMIN/USER` 相互独立。运维人员通过精确 CRM userId 设置平台角色：
+Admin Panel 不会随普通 `docker compose up -d` 启动。普通 `/sales-agent` 入口不展示管理链接，并拒绝 `/api/admin/*`。主服务运行后，管理员可显式指定该服务启动面板：
 
 ```bash
-docker compose exec librechat \
+docker compose up -d founder-sales-admin-panel
+```
+
+启动后通过宿主机 `3031` 端口访问，仅接受 `ADMIN_ALLOWED_CIDR` 指定的来源。无需使用时可执行 `docker compose stop founder-sales-admin-panel` 停止面板。
+
+本地管理员由运维人员手动初始化。命令优先读取 `.env` 中的 Email 和密码；变量留空时交互询问，密码不会回显：
+
+```bash
+docker compose exec founder-sales-librechat \
+  /app/crm-auth/init-admin.sh
+```
+
+脚本按 Email 幂等创建或提升本地账号，不覆盖已有密码，并拒绝提升 CRM、OAuth 等外部身份。
+
+CRM `roleId` 与 LibreChat `ADMIN/USER` 仍相互独立。需要调整 CRM 映射账号的平台角色时执行：
+
+```bash
+docker compose exec founder-sales-librechat \
   node /app/crm-auth/set-role.js <CRM_USER_ID> ADMIN
 ```
 
