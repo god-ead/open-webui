@@ -50,9 +50,9 @@ class Settings:
     company_profile_llm_model: str = "qwen3.5-plus"
     company_profile_llm_timeout_seconds: int = 180
 
-    rag_store_path: str = "/app/data/knowledge/sales_rag.sqlite3"
-    faiss_index_path: str = "/app/data/knowledge/sales_rag.faiss"
-    embedding_model_path: str = "/app/data/model/embedding"
+    rag_store_path: str = "/app/data/agent/knowledge/sales_rag.sqlite3"
+    faiss_index_path: str = "/app/data/agent/knowledge/sales_rag.faiss"
+    embedding_model_path: str = "/app/data/agent/model/embedding"
     reranker_model_path: str = ""
     rag_device: str = "cpu"
     rag_candidate_k: int = 50
@@ -110,14 +110,6 @@ class Settings:
             company_profile_llm_timeout_seconds=_env_int(
                 "COMPANY_PROFILE_LLM_TIMEOUT_SECONDS",
                 cls.company_profile_llm_timeout_seconds,
-            ),
-            rag_store_path=_env_str("RAG_STORE_PATH", cls.rag_store_path),
-            faiss_index_path=_env_str("FAISS_INDEX_PATH", cls.faiss_index_path),
-            embedding_model_path=_env_str(
-                "EMBEDDING_MODEL_PATH", cls.embedding_model_path
-            ),
-            reranker_model_path=_env_str(
-                "RERANKER_MODEL_PATH", cls.reranker_model_path
             ),
             rag_device=_env_str("RAG_DEVICE", cls.rag_device),
             rag_candidate_k=_env_int("RAG_CANDIDATE_K", cls.rag_candidate_k),

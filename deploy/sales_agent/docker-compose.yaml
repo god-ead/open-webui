@@ -38,7 +38,7 @@ services:
       COMPANY_PROFILE_LLM_API_KEY: ${COMPANY_PROFILE_LLM_API_KEY:?COMPANY_PROFILE_LLM_API_KEY is required}
     volumes:
       # checkpoint \ RAG 知识库 \ embedding/rerank 模型 均来自宿主机对应目录
-      - ${FOUNDER_SALES_DATA_DIR:-./data/founder-sales}:/app/data
+      - ${FOUNDER_SALES_DATA_DIR:-./data/founder-sales}:/app/data/runtime
     expose:
       - "8050"
     networks:
@@ -130,3 +130,9 @@ services:
 networks:
   sales_agent_net:
     name: sales_agent_net
+
+secrets:
+  minio_access_key:
+    environment: MINIO_ACCESS_KEY
+  minio_secret_key:
+    environment: MINIO_SECRET_KEY
