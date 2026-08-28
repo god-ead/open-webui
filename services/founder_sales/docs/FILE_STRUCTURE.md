@@ -30,15 +30,17 @@ founder-sales/
 │   └── openai_chat.py           #   Chat Completions 请求、身份 Header 与 SSE 转换
 │
 ├── tools/                       # 主 Agent 的 Tool 实现
-│   ├── __init__.py              #   re-export 当前启用的三个 Tool
+│   ├── __init__.py              #   re-export 当前启用的 Tool
 │   ├── company_profile.py       #   企业画像 Tool Adapter
 │   ├── knowledge.py             #   销售知识 RAG：FAISS 召回 + SQLite 取 chunk + 可选 reranker
 │   ├── qwen_web_search.py       #   联网搜索 Tool：供应商调用、重试与结果整理
+│   ├── visit_plan.py            #   拜访计划 Tool：知识检索 + 专用 Qwen 生成
 │   ├── contact_search.py        #   保留的联系方式搜索源码，当前未注册
 │   └── information_organizer.py #   联系方式搜索的信息整理模块
 │
 ├── prompts/
-│   └── main_agent.md            # 主 Agent 系统提示词
+│   ├── main_agent.md            # 主 Agent 系统提示词
+│   └── visit_plan.md            # 拜访计划专用系统提示词
 │
 └── .dev/                        # 本地研究/备份区（gitignore，不入库）
     └── backup/
@@ -72,6 +74,7 @@ founder-sales/
 | [company_profile.py](../tools/company_profile.py) | `CompanyProfileTool`：在线程中调用同步企业画像核心，并返回 Markdown 报告 |
 | [knowledge.py](../tools/knowledge.py) | `KnowledgeService`：启动期硬加载 embedding 模型与 FAISS 索引（缺任一文件启动失败）；`search()` 按 FAISS 相似度召回，`RERANKER_MODEL_PATH` 非空时用 CrossEncoder 重排，否则按相似度直排取 top_k |
 | [qwen_web_search.py](../tools/qwen_web_search.py) | `QwenWebSearch`：调用 `QWEN_SEARCH_MODEL` 联网搜索，规范化候选回答、来源和调用元数据，并对受控错误进行有限重试 |
+| [visit_plan.py](../tools/visit_plan.py) | `VisitPlanTool`：检索销售知识，调用 `QWEN_VISIT_MODEL` 生成完整拜访计划，失败时切换 `QWEN_FALLBACK_MODEL` |
 | [contact_search.py](../tools/contact_search.py) | `ContactSearch`：保留的联系方式搜索实现；当前不导出、不注册给主 Agent |
 | [information_organizer.py](../tools/information_organizer.py) | `QwenInformationOrganizer`：联系方式搜索使用的 JSON Schema 信息整理模块 |
 

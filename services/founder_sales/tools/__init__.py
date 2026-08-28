@@ -3,5 +3,11 @@
 from .company_profile import CompanyProfileTool
 from .knowledge import KnowledgeService
 from .qwen_web_search import QwenWebSearch
+from .visit_plan import VisitPlanTool
 
-__all__ = ["CompanyProfileTool", "KnowledgeService", "QwenWebSearch"]
+__all__ = [
+    "CompanyProfileTool",
+    "KnowledgeService",
+    "QwenWebSearch",
+    "VisitPlanTool",
+]

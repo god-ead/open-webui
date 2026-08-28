@@ -38,6 +38,7 @@ class Settings:
     qwen_search_model: str = "qwen3.5-plus"
     qwen_search_retry_count: int = 2
     qwen_agent_model: str = "qwen3.7-plus"
+    qwen_visit_model: str = "qwen3.7-plus"
     qwen_fallback_model: str = "qwen3.5-plus"
     qwen_task_model_lite: str = ""
     qwen_timeout_seconds: int = 60
@@ -83,6 +84,9 @@ class Settings:
             ),
             qwen_agent_model=_env_str(
                 "QWEN_AGENT_MODEL", cls.qwen_agent_model
+            ),
+            qwen_visit_model=_env_str(
+                "QWEN_VISIT_MODEL", cls.qwen_visit_model
             ),
             qwen_fallback_model=_env_str(
                 "QWEN_FALLBACK_MODEL", cls.qwen_fallback_model

@@ -23,7 +23,12 @@ from founder_sales.assistant.qwen_task_model import QwenTaskModel
 from founder_sales.bridge import router as openai_router
 from founder_sales.langgraph_runtime import LangGraphRuntime
 from founder_sales.main_agent_graph import build_main_agent_graph
-from founder_sales.tools import CompanyProfileTool, KnowledgeService, QwenWebSearch
+from founder_sales.tools import (
+    CompanyProfileTool,
+    KnowledgeService,
+    QwenWebSearch,
+    VisitPlanTool,
+)
 
 
 @asynccontextmanager
@@ -50,6 +55,7 @@ async def lifespan(service: FastAPI):
         try:
             knowledge = await asyncio.to_thread(KnowledgeService.load, settings)
             web_search = QwenWebSearch(settings, http_client)
+            visit_plan = VisitPlanTool(settings, qwen_client, knowledge)
             company_profile = CompanyProfileTool(
                 CompanyProfileService(
                     CompanyProfileConfig(
@@ -63,7 +69,12 @@ async def lifespan(service: FastAPI):
                 )
             )
             agent = QwenMainAgent(
-                settings, qwen_client, web_search, knowledge, company_profile
+                settings,
+                qwen_client,
+                web_search,
+                knowledge,
+                visit_plan,
+                company_profile,
             )
             task_model = QwenTaskModel(settings, qwen_client)
             graph = build_main_agent_graph(saver, agent)

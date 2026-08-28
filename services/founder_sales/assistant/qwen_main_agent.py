@@ -67,6 +67,12 @@ TOOL_SCHEMAS = [
         parameter_name="query",
     ),
     _tool_schema(
+        "generate_visit_plan",
+        "根据客户、拜访对象、目标和合作背景生成完整标准客户拜访计划；仅在用户明确要求完整计划时调用。",
+        "包含客户、拜访对象及角色、拜访目标、历史合作和项目背景等已知信息的自包含拜访上下文。",
+        parameter_name="visit_context",
+    ),
+    _tool_schema(
         "generate_company_profile",
         "为指定企业生成完整企业画像和营销价值分析；仅在用户明确要求企业画像、企业分析、客户画像或营销价值研判时调用。",
         "需要生成企业画像的完整企业名称。",
@@ -172,6 +178,11 @@ def _tool_result_for_model(
             ],
             "error": result.get("error"),
         }
+    if tool_name == "generate_visit_plan":
+        return {
+            key: result.get(key)
+            for key in ("plan", "model", "used_fallback")
+        }
     if tool_name == "generate_company_profile":
         return {
             key: result.get(key)
@@ -209,13 +220,15 @@ class QwenMainAgent:
         client: AsyncOpenAI,
         web_search: Any,
         knowledge: Any,
+        visit_plan: Any,
         company_profile: Any,
     ) -> None:
-        """注入模型连接、两个检索工具和企业画像 Tool。"""
+        """注入模型连接、检索、拜访计划和企业画像 Tool。"""
         self.settings = settings
         self.client = client
         self.web_search = web_search
         self.knowledge = knowledge
+        self.visit_plan = visit_plan
         self.company_profile = company_profile
 
     async def _deltas(self, payload: dict[str, Any]) -> AsyncIterator[Mapping[str, Any]]:
@@ -275,6 +288,7 @@ class QwenMainAgent:
         parameters = {
             "web_search": "query",
             "search_sales_knowledge": "query",
+            "generate_visit_plan": "visit_context",
             "generate_company_profile": "company_name",
         }
         for call in calls:
@@ -341,6 +355,8 @@ class QwenMainAgent:
                         "hits": [asdict(hit) for hit in hits],
                         "error": None,
                     }
+                elif call.name == "generate_visit_plan":
+                    result = await self.visit_plan.generate(prepared.query)
                 elif call.name == "generate_company_profile":
                     result = await self.company_profile.generate(prepared.query)
                 else:
@@ -569,6 +585,7 @@ def _tool_summary(
     labels = {
         "web_search": "联网搜索",
         "search_sales_knowledge": "销售知识库查询",
+        "generate_visit_plan": "拜访计划准备",
         "generate_company_profile": "企业画像生成",
     }
     label = labels.get(item.call.name, "工具调用")
