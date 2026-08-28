@@ -109,13 +109,17 @@ docker compose --env-file .env \
 
 ## 管理员角色
 
-Admin Panel 不会随普通 `docker compose up -d` 启动。普通 `/sales-agent` 入口不展示管理链接，并拒绝 `/api/admin/*`。主服务运行后，管理员可显式指定该服务启动面板：
+Admin Panel 不会随普通 `docker compose up -d` 启动。普通 `/sales-agent` 入口不展示管理链接，并拒绝 `/api/admin/*`。管理员在主服务运行后按需启停面板：
 
 ```bash
+# 按需启动管理员面板
 docker compose up -d founder-sales-admin-panel
+
+# 使用完成后仅关闭管理员面板
+docker compose stop founder-sales-admin-panel
 ```
 
-启动后通过宿主机 `3031` 端口访问，仅接受 `ADMIN_ALLOWED_CIDR` 指定的来源。无需使用时可执行 `docker compose stop founder-sales-admin-panel` 停止面板。
+启动后通过宿主机 `3031` 端口访问，仅接受 `ADMIN_ALLOWED_CIDR` 指定的来源。单独启停 Admin Panel 不影响销售智能体、LibreChat、MongoDB 和 Nginx。关闭整套服务时，先执行 `docker compose stop founder-sales-admin-panel` 关闭可能正在运行的面板，再执行 `docker compose down` 关闭正常服务。
 
 本地管理员由运维人员手动初始化。命令优先读取 `.env` 中的 Email 和密码；变量留空时交互询问，密码不会回显：
 

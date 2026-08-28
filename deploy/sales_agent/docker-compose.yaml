@@ -39,7 +39,7 @@ services:
       QWEN_TASK_MODEL_LITE: ${QWEN_TASK_MODEL_LITE:?QWEN_TASK_MODEL_LITE is required}
       COMPANY_PROFILE_LLM_API_KEY: ${COMPANY_PROFILE_LLM_API_KEY:?COMPANY_PROFILE_LLM_API_KEY is required}
     volumes:
-      # checkpoint \ RAG 知识库 \ embedding/rerank 模型 均来自宿主机对应目录
+      # 宿主机挂载的 checkpoint 根目录
       - ${FOUNDER_SALES_DATA_DIR:-./data/founder-sales}:/app/data/runtime
     expose:
       - "8050"
@@ -88,7 +88,7 @@ services:
     volumes:
       - ./librechat.yaml:/app/librechat.yaml:ro
       - ${LIBRACHAT_UPLOADS_DIR:-./data/uploads}:/app/uploads
-      - ${LIBRACHAT_LOGS_DIR:-./data/logs}:/app/logs
+      - ${LIBRECHAT_LOGS_DIR:-./data/logs}:/app/logs
     depends_on:
       founder-sales-librechat-mongodb:
         condition: service_healthy
