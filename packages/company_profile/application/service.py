@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 from .config import CompanyProfileConfig
@@ -14,8 +15,6 @@ from .match_policy import pick_best_match
 from .result import ProfileApplicationResult
 from ..lookalike.collectors.kimi_collector import QwenCollector
 from ..lookalike.collectors.manager import CollectorManager
-from ..lookalike.collectors.marketing_channels import MarketingChannelsAdapter
-from ..lookalike.collectors.web_scraper import WebScraperAdapter
 from ..lookalike.engine import AnalysisEngine, MultiMatchResult
 from ..lookalike.models import AnalysisResult, CompanyMatch
 from ..lookalike.report import ReportGenerator
@@ -47,7 +46,11 @@ class CompanyProfileService:
         self.scoring_config_path = Path(scoring_config_path or self._default_config_path())
         self._reporter = ReportGenerator()
 
-    def generate(self, company_name: str) -> ProfileApplicationResult:
+    def generate(
+        self,
+        company_name: str,
+        on_section: Callable[[str], None] | None = None,
+    ) -> ProfileApplicationResult:
         self._validate_configuration()
         normalized_name = (company_name or "").strip()
         if not normalized_name:
@@ -55,30 +58,23 @@ class CompanyProfileService:
 
         candidates: tuple[CompanyMatch, ...] = ()
         selected_match: CompanyMatch | None = None
-        result = self.analyze_company(normalized_name)
+        on_progress = self._section_publisher(on_section)
+        result = self.analyze_company(normalized_name, on_progress)
 
         if isinstance(result, MultiMatchResult):
             candidates = tuple(result.matches)
             selected_match = self.pick_best_match(result.matches)
             if selected_match is None:
                 raise CompanyNotFoundError(f"未找到 {normalized_name} 的匹配企业")
-            result = self.analyze_match(selected_match)
+            result = self.analyze_match(selected_match, on_progress)
 
-        if self.is_empty_result(result):
+        if self._has_no_meaningful_data(result):
             if self._is_llm_collection_failed(result):
                 raise LLMServiceError(
                     f"大模型调用异常：企业 {normalized_name} 信息采集失败，"
                     f"请检查 LLM API 配置或稍后重试"
                 )
             raise CompanyNotFoundError(f"未找到 {normalized_name} 的有效公开信息")
-
-        # 即使 sources 非空（含 collection_failed 标记），
-        # 若所有数据字段均为空，仍应视为 LLM 采集失败
-        if self._is_llm_collection_failed(result) and self._has_no_meaningful_data(result):
-            raise LLMServiceError(
-                f"大模型调用异常：企业 {normalized_name} 信息采集失败，"
-                f"请检查 LLM API 配置或稍后重试"
-            )
 
         markdown = self.render_markdown(result)
         scoring_config = load_config(str(self.scoring_config_path))
@@ -92,22 +88,64 @@ class CompanyProfileService:
             selected_match=selected_match,
         )
 
-    def analyze_company(self, company_name: str) -> AnalysisResult | MultiMatchResult:
+    def analyze_company(
+        self,
+        company_name: str,
+        on_progress: Callable[[str, AnalysisResult], None] | None = None,
+    ) -> AnalysisResult | MultiMatchResult:
         self._validate_configuration()
         return self._build_engine().analyze(
             company_name,
             config_path=str(self.scoring_config_path),
+            on_progress=on_progress,
         )
 
-    def analyze_match(self, match: CompanyMatch) -> AnalysisResult:
+    def analyze_match(
+        self,
+        match: CompanyMatch,
+        on_progress: Callable[[str, AnalysisResult], None] | None = None,
+    ) -> AnalysisResult:
         self._validate_configuration()
         return self._build_engine().analyze_by_id(
             match,
             config_path=str(self.scoring_config_path),
+            on_progress=on_progress,
         )
 
     def render_markdown(self, result: AnalysisResult) -> str:
         return self._reporter.generate_markdown(result)
+
+    def _section_publisher(
+        self,
+        on_section: Callable[[str], None] | None,
+    ) -> Callable[[str, AnalysisResult], None] | None:
+        """按 Qwen 固定轮次发布六章，并保留完整 Markdown 边界。"""
+        if on_section is None:
+            return None
+
+        next_section = 1
+        last_sections = {
+            "1a-基础工商": 2,
+            "3-诉讼技术": 3,
+            "4-联系方式": 4,
+            "analysis:scored": 6,
+        }
+
+        def publish(stage: str, result: AnalysisResult) -> None:
+            nonlocal next_section
+            last_section = last_sections.get(stage)
+            if last_section is None or self._has_no_meaningful_data(result):
+                return
+
+            sections = self._reporter.generate_sections(result)
+            if next_section == 1:
+                on_section(sections[0])
+            while next_section <= last_section:
+                suffix = "\n" if next_section == 6 else ""
+                on_section(f"\n\n{sections[next_section]}{suffix}")
+                next_section += 1
+
+        return publish
 
     @staticmethod
     def pick_best_match(matches: list[CompanyMatch]) -> CompanyMatch | None:
@@ -132,10 +170,22 @@ class CompanyProfileService:
         导致 :meth:`is_empty_result` 返回 False；
         此时需要用本方法判断是否确实毫无可用数据。
         """
-        return not any(
-            bool(getattr(result.raw_data, field_name))
-            for field_name in _RAW_DATA_FIELDS
-        )
+        ignored_keys = {
+            "name",
+            "resolved_name",
+            "_source_url",
+            "sources",
+            "conflicts",
+            "report_warnings",
+        }
+        for field_name in _RAW_DATA_FIELDS:
+            values = getattr(result.raw_data, field_name)
+            if any(
+                key not in ignored_keys and value not in (None, "", [], {})
+                for key, value in values.items()
+            ):
+                return False
+        return True
 
     @staticmethod
     def _is_llm_collection_failed(result: AnalysisResult) -> bool:
@@ -168,13 +218,8 @@ class CompanyProfileService:
             model=self.config.llm_model,
             timeout_seconds=self.config.llm_timeout_seconds,
         )
-        collectors = [
-            qwen_collector,
-            WebScraperAdapter(),
-            MarketingChannelsAdapter(),
-        ]
         return AnalysisEngine(
-            collector_manager=CollectorManager(collectors),
+            collector_manager=CollectorManager([qwen_collector]),
             storage=NoopStorage(),
             config_path=str(self.scoring_config_path),
         )

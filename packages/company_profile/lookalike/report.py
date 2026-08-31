@@ -1,14 +1,4 @@
-"""报告生成器 — 将分析结果整合为 Markdown / PDF 格式的完整报告。
-
-报告章节：
-1. 企业基本信息摘要
-2. 六维特征分析明细
-3. 评分卡结果
-4. 成单可能性评估
-5. 销售沟通策略建议
-6. 结论
-7. 数据来源说明
-"""
+"""报告生成器 — 生成聊天与 PDF 共用的六章企业画像报告。"""
 
 from __future__ import annotations
 
@@ -22,6 +12,7 @@ from .models import (
     DimensionScore,
     FeatureStatus,
     FeatureValue,
+    ScoreResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -110,22 +101,21 @@ class ReportGenerator:
     # Public API
     # ------------------------------------------------------------------
 
-    def generate_markdown(self, data: AnalysisResult) -> str:
-        """Generate a full Markdown report from *data*."""
-        sections = [
+    def generate_sections(self, data: AnalysisResult) -> list[str]:
+        """按最终报告顺序生成页头和六个正式章节。"""
+        return [
             self._header(data),
             self._section_basic_info(data),
             self._section_operating_status(data),
             self._section_company_overview(data),
+            self._section_contact_info(data),
             self._section_probability(data),
             self._section_scorecard(data),
-            self._section_contact_info(data),
-            self._section_strategy(data),
-            self._section_six_dimensions(data),
-            self._section_conclusion(data),
-            self._section_data_sources(data),
         ]
-        return "\n\n".join(sections) + "\n"
+
+    def generate_markdown(self, data: AnalysisResult) -> str:
+        """Generate a full Markdown report from *data*."""
+        return "\n\n".join(self.generate_sections(data)) + "\n"
 
     def generate_pdf(self, data: AnalysisResult, output_path: str) -> None:
         """Generate a PDF report and raise when PDF rendering is unavailable."""
@@ -167,10 +157,8 @@ class ReportGenerator:
     @staticmethod
     def _header(data: AnalysisResult) -> str:
         ts = _fmt_datetime(data.analyzed_at)
-        sr = data.score_result
-        score_bar = "🟢" if sr.total_score >= 65 else ("🟡" if sr.total_score >= 35 else "🔴")
         return (
-            f"# {score_bar} {data.raw_data.company_name} — 综合得分 {sr.total_score:.0f}/100　成单可能性：{sr.probability_level}\n\n"
+            f"# {data.raw_data.company_name}企业画像报告\n\n"
             f"报告编号：{data.report_id}　　生成时间：{ts}"
         )
 
@@ -194,13 +182,14 @@ class ReportGenerator:
             ("员工规模", info.get("employee_scale")),
             ("所在地域", info.get("region")),
         ]
-        lines = ["## 一、基础工商信息", ""]
-        lines.extend(
-            f"- {label}：{_format_raw_value(value)}"
+        values = [
+            (label, value)
             for label, value in fields
             if value not in (None, "", [], {})
-        )
-        return "\n".join(lines)
+        ]
+        lines = ["## 一、基础工商信息", ""]
+        lines.extend(f"- {label}：{_format_raw_value(value)}" for label, value in values)
+        return _finish_section(lines, len(values), len(fields))
 
     # ------------------------------------------------------------------
     # 2. 企业经营范围
@@ -236,7 +225,7 @@ class ReportGenerator:
 
         if len(lines) == 2 and business_scope:
             lines.append(business_scope)
-        return "\n".join(lines)
+        return _finish_section(lines, len(lines) - 2)
 
     # ------------------------------------------------------------------
     # 3. 企业整体情况
@@ -266,22 +255,26 @@ class ReportGenerator:
             ("司法风险", judicial_risk),
             ("业务模式", info.get("business_model")),
         ]
-        lines = ["## 三、企业整体情况", ""]
-        lines.extend(
-            f"- {label}：{_format_raw_value(value)}"
+        values = [
+            (label, value)
             for label, value in fields
             if value not in (None, "", [], {})
-        )
-        return "\n".join(lines)
+        ]
+        lines = ["## 三、企业整体情况", ""]
+        lines.extend(f"- {label}：{_format_raw_value(value)}" for label, value in values)
+        return _finish_section(lines, len(values), len(fields))
 
     # ------------------------------------------------------------------
-    # 4. 成单可能性评估
+    # 5. 成单可能性评估
     # ------------------------------------------------------------------
 
     @staticmethod
     def _section_probability(data: AnalysisResult) -> str:
         sr = data.score_result
-        lines = ["## 四、成单可能性评估\n"]
+        lines = ["## 五、成单可能性评估\n"]
+        insufficient = _insufficient_dimensions(sr)
+        if insufficient is None:
+            return _finish_section(lines, 0)
         lines.append(f"- **成单可能性等级**：{sr.probability_level}")
         lines.append(f"- **综合得分**：{sr.total_score:.1f} / 100")
 
@@ -298,16 +291,21 @@ class ReportGenerator:
                 "建议补充信息后重新评估。"
             )
 
+        if insufficient:
+            lines.append("\n> 部分信息未获取，评分包含默认分。")
         return "\n".join(lines)
 
     # ------------------------------------------------------------------
-    # 5. 评分卡结果
+    # 6. 评分卡结果
     # ------------------------------------------------------------------
 
     @staticmethod
     def _section_scorecard(data: AnalysisResult) -> str:
         sr = data.score_result
-        lines = ["## 五、评分卡结果\n"]
+        lines = ["## 六、评分卡结果\n"]
+        insufficient = _insufficient_dimensions(sr)
+        if insufficient is None:
+            return _finish_section(lines, 0)
         lines.append("| 维度 | 维度得分 | 满分 | 权重 | 加权得分 | 数据充分性 |")
         lines.append("| --- | --- | --- | --- | --- | --- |")
 
@@ -320,19 +318,18 @@ class ReportGenerator:
             )
 
         lines.append(f"| **综合得分** | | | | **{sr.total_score:.1f}** | |")
+        if insufficient:
+            lines.append("\n> 部分信息未获取，评分包含默认分。")
         return "\n".join(lines)
 
     # ------------------------------------------------------------------
-    # 6. 联系方式
+    # 4. 联系方式
     # ------------------------------------------------------------------
 
     @staticmethod
     def _section_contact_info(data: AnalysisResult) -> str:
         contact = data.raw_data.contact_info
-        if not contact:
-            return ""
-
-        lines = ["## 六、联系方式", ""]
+        lines = ["## 四、联系方式", ""]
 
         # 主要电话
         phone_fields = [
@@ -373,30 +370,46 @@ class ReportGenerator:
 
         # 联系人
         persons = contact.get("contact_persons") or []
-        if isinstance(persons, list) and persons:
+        valid_persons = [
+            person
+            for person in persons
+            if isinstance(person, dict)
+            and any(
+                _has_value(person.get(key))
+                for key in ("name", "title", "phone", "source")
+            )
+        ]
+        if valid_persons:
             has_contact = True
             lines.append("")
             lines.append("### 关键联系人")
             lines.append("")
             lines.append("| 姓名 | 职务 | 电话 | 来源 |")
             lines.append("| ---- | ---- | ---- | ---- |")
-            for p in persons:
-                if isinstance(p, dict):
-                    name = p.get("name", "—")
-                    title = p.get("title", "—")
-                    phone = p.get("phone", "—")
-                    src = p.get("source", "—")
-                    lines.append(f"| {name} | {title} | {phone} | {src} |")
+            for person in valid_persons:
+                name = person.get("name") or "—"
+                title = person.get("title") or "—"
+                phone = person.get("phone") or "—"
+                src = person.get("source") or "—"
+                lines.append(f"| {name} | {title} | {phone} | {src} |")
 
         if not has_contact:
-            return ""
+            return _finish_section(lines, 0)
 
         # 来源
         src_url = contact.get("_source_url")
         if src_url and str(src_url).startswith("http"):
             lines.append(f"\n> 数据来源：{src_url}")
 
-        return "\n".join(lines)
+        expected_fields = len(phone_fields) + 5
+        present_fields = sum(_has_value(contact.get(key)) for key, _ in phone_fields)
+        present_fields += int(bool(others))
+        present_fields += sum(
+            _has_value(contact.get(key))
+            for key in ("email", "legal_email", "address")
+        )
+        present_fields += int(bool(valid_persons))
+        return _finish_section(lines, present_fields, expected_fields)
 
     # ------------------------------------------------------------------
     # 7. 销售沟通策略
@@ -617,6 +630,31 @@ def _status_label(status: FeatureStatus) -> str:
         FeatureStatus.UNAVAILABLE: "未获取",
         FeatureStatus.INFERRED: "推断值",
     }.get(status, str(status))
+
+
+def _has_value(value: object) -> bool:
+    return value not in (None, "", [], {}) and str(value).lower() not in (
+        "null",
+        "none",
+    )
+
+
+def _finish_section(lines: list[str], present: int, expected: int | None = None) -> str:
+    """补齐章节缺失提示并返回 Markdown。"""
+    if not present:
+        lines.append("暂未获取到有效信息")
+    elif expected is not None and present < expected:
+        lines.append("\n> 部分信息未获取。")
+    return "\n".join(lines)
+
+
+def _insufficient_dimensions(score: ScoreResult) -> bool | None:
+    """返回评分是否部分缺失；全部维度缺失时返回 ``None``。"""
+    if not score.dimension_scores or all(
+        dimension.data_insufficient for dimension in score.dimension_scores
+    ):
+        return None
+    return any(dimension.data_insufficient for dimension in score.dimension_scores)
 
 
 def _format_raw_value(value: object) -> str:

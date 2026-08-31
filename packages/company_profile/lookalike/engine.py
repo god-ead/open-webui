@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -71,6 +72,7 @@ class AnalysisEngine:
         self,
         company_name: str,
         config_path: str | None = None,
+        on_progress: Callable[[str, AnalysisResult], None] | None = None,
     ) -> AnalysisResult | MultiMatchResult:
         """Run the full analysis pipeline for *company_name*.
 
@@ -100,12 +102,13 @@ class AnalysisEngine:
             return MultiMatchResult(matches=matches)
 
         # Exactly one match — proceed with full pipeline
-        return self._run_pipeline(matches[0])
+        return self._run_pipeline(matches[0], on_progress)
 
     def analyze_by_id(
         self,
         match: CompanyMatch,
         config_path: str | None = None,
+        on_progress: Callable[[str, AnalysisResult], None] | None = None,
     ) -> AnalysisResult:
         """Run the full pipeline for a specific :class:`CompanyMatch`.
 
@@ -116,7 +119,7 @@ class AnalysisEngine:
             self._scorer.reload_config(config_path)
             self._config_path = config_path
 
-        return self._run_pipeline(match)
+        return self._run_pipeline(match, on_progress)
 
     def rescore(
         self,
@@ -161,16 +164,37 @@ class AnalysisEngine:
     # Internal pipeline
     # ------------------------------------------------------------------
 
-    def _run_pipeline(self, match: CompanyMatch) -> AnalysisResult:
+    def _run_pipeline(
+        self,
+        match: CompanyMatch,
+        on_progress: Callable[[str, AnalysisResult], None] | None = None,
+    ) -> AnalysisResult:
         """Execute the full collect → extract → score → strategy → save pipeline."""
 
+        analyzed_at = datetime.now()
+        report_id = _generate_report_id(match.company_name)
+
+        def publish_qwen_round(stage: str, raw_data: RawCompanyData) -> None:
+            if on_progress is None:
+                return
+            if not raw_data.company_name:
+                raw_data.company_name = match.company_name
+            on_progress(
+                stage,
+                AnalysisResult(
+                    report_id=report_id,
+                    raw_data=raw_data,
+                    analyzed_at=analyzed_at,
+                ),
+            )
+
         # Step 2: Collect
-        raw_data = self._safe_collect(match.company_id)
+        raw_data = self._safe_collect(
+            match.company_id,
+            publish_qwen_round if on_progress is not None else None,
+        )
         if not raw_data.company_name:
             raw_data.company_name = match.company_name
-
-        # Generate report_id with company name
-        report_id = _generate_report_id(raw_data.company_name)
 
         # Step 3: Extract
         features = self._safe_extract(raw_data)
@@ -188,8 +212,11 @@ class AnalysisEngine:
             features=features,
             score_result=score_result,
             strategy=strategy,
-            analyzed_at=datetime.now(),
+            analyzed_at=analyzed_at,
         )
+
+        if on_progress is not None:
+            on_progress("analysis:scored", result)
 
         # Step 6: Save
         self._safe_save(report_id, result)
@@ -208,10 +235,14 @@ class AnalysisEngine:
             logger.error("搜索阶段异常", exc_info=True)
             return []
 
-    def _safe_collect(self, company_id: str) -> RawCompanyData:
+    def _safe_collect(
+        self,
+        company_id: str,
+        on_update: Callable[[str, RawCompanyData], None] | None = None,
+    ) -> RawCompanyData:
         """Collect with error handling — returns empty data on failure."""
         try:
-            return self._collector.collect(company_id)
+            return self._collector.collect(company_id, on_update)
         except Exception:
             logger.error("数据采集阶段异常", exc_info=True)
             return RawCompanyData(company_id=company_id, company_name="")
