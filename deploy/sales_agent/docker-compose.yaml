@@ -148,11 +148,11 @@ services:
       - mongod
       - --noauth
       - --logpath
-      - /data/app/logs/mongodb.log
+      - /data/db/logs/mongodb.log
       - --logappend
     volumes:
       - ${MONGO_DATA_DIR:-./data/mongodb}:/data/db
-      - ${MONGODB_LOGS_DIR:-./data/logs/mongodb}:/data/app/logs
+      - ${MONGODB_LOGS_DIR:-./data/logs/mongodb}:/data/db/logs
     healthcheck:
       test:
         - CMD
