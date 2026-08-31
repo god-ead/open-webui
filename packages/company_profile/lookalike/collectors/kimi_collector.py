@@ -10,6 +10,7 @@ import json
 import logging
 import re
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -449,7 +450,11 @@ class QwenCollector(BaseCollector):
             )
         ]
 
-    def collect(self, company_id: str) -> RawCompanyData:
+    def collect(
+        self,
+        company_id: str,
+        on_update: Callable[[str, RawCompanyData], None] | None = None,
+    ) -> RawCompanyData:
         """
         并行执行五轮企业公开信息采集，并按固定轮次顺序合并结果
 
@@ -461,7 +466,7 @@ class QwenCollector(BaseCollector):
             1. 将基础工商、财务治理、招聘营销、诉讼技术和联系方式五轮任务
                提交到有界线程池
             2. 每轮独立调用 Qwen，并在轮次内部完成重试和耗时统计
-            3. 等待所有轮次结束后，按照原始轮次定义顺序合并有效数据
+            3. 基础工商、诉讼技术、联系方式完成后依次发布对应数据
             4. 根据成功轮次数记录 full_collection、partial_collection
                或 collection_failed 状态
 
@@ -515,10 +520,12 @@ class QwenCollector(BaseCollector):
                 executor.submit(self._collect_contact_round_4, company_id),
             ))
 
-            round_results: list[_RoundResult] = []
-            for label, future in futures:
+            future_by_label = dict(futures)
+            round_results: dict[str, _RoundResult] = {}
+
+            def resolve(label: str) -> _RoundResult:
                 try:
-                    round_results.append(future.result())
+                    result = future_by_label[label].result()
                 except Exception as exc:
                     logger.error(
                         "Qwen round crashed: company=%s round=%s",
@@ -526,31 +533,29 @@ class QwenCollector(BaseCollector):
                         label,
                         exc_info=True,
                     )
-                    round_results.append(
-                        _RoundResult(
-                            label=label,
-                            payload=None,
-                            attempts=0,
-                            elapsed_seconds=0.0,
-                            error=f"{type(exc).__name__}: {exc}",
-                        )
+                    result = _RoundResult(
+                        label=label,
+                        payload=None,
+                        attempts=0,
+                        elapsed_seconds=0.0,
+                        error=f"{type(exc).__name__}: {exc}",
                     )
+                round_results[label] = result
+                return result
+
+            preview = RawCompanyData(company_id=company_id, company_name=company_id)
+            for label in ("1a-基础工商", "3-诉讼技术", "4-联系方式"):
+                self._merge_round(preview, resolve(label), now)
+                if on_update is not None:
+                    on_update(label, preview)
+
+            for label in ("1b-财务治理", "2-招聘营销"):
+                resolve(label)
 
         successful_rounds = 0
-        for round_result in round_results:
-            result = round_result.payload
-            if not result:
-                continue
-            successful_rounds += 1
-            # Merge only on the caller thread and in declared round order.
-            for section_name, section_data in result.items():
-                if isinstance(section_data, dict):
-                    url = section_data.get("_source_url")
-                    if isinstance(url, str) and url.startswith("http"):
-                        raw.sources.append(
-                            DataSource("qwen_web_search", url, now, section_name)
-                        )
-            self._merge_extracted(raw, result)
+        for label, _ in futures:
+            if self._merge_round(raw, round_results[label], now):
+                successful_rounds += 1
 
         failed_rounds = 5 - successful_rounds
         elapsed_seconds = time.perf_counter() - started_at
@@ -590,6 +595,31 @@ class QwenCollector(BaseCollector):
             DataSource("qwen_web_search", "qwen://web_search", now, status)
         )
         return raw
+
+    def _merge_round(
+        self,
+        raw: RawCompanyData,
+        round_result: _RoundResult,
+        collected_at: datetime,
+    ) -> bool:
+        """合并单轮有效结果，并保留该轮数据来源。"""
+        result = round_result.payload
+        if not result:
+            return False
+        for section_name, section_data in result.items():
+            if isinstance(section_data, dict):
+                url = section_data.get("_source_url")
+                if isinstance(url, str) and url.startswith("http"):
+                    raw.sources.append(
+                        DataSource(
+                            "qwen_web_search",
+                            url,
+                            collected_at,
+                            section_name,
+                        )
+                    )
+        self._merge_extracted(raw, result)
+        return True
 
     def _collect_round(
         self,

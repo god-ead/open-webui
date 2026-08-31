@@ -57,7 +57,7 @@ interface:
     share: false
     public: false
 
-  customWelcome: "你好，{{user.name}}！欢迎使用方正营销智能体"
+  customWelcome: "你好，{{user.name}}！"
 
 memory:
   disabled: true

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -320,7 +320,11 @@ class QwenMainAgent:
             prepared.append(_PreparedCall(call=call, query=query, error=error))
         return prepared
 
-    async def _execute(self, prepared: _PreparedCall) -> dict[str, Any]:
+    async def _execute(
+        self,
+        prepared: _PreparedCall,
+        on_section: Callable[[str], None] | None = None,
+    ) -> dict[str, Any]:
         """执行一个已校验 Tool，并记录完整结构化响应。"""
         call = prepared.call
         started = perf_counter()
@@ -358,7 +362,10 @@ class QwenMainAgent:
                 elif call.name == "generate_visit_plan":
                     result = await self.visit_plan.generate(prepared.query)
                 elif call.name == "generate_company_profile":
-                    result = await self.company_profile.generate(prepared.query)
+                    result = await self.company_profile.generate(
+                        prepared.query,
+                        on_section,
+                    )
                 else:
                     raise RuntimeError(f"unsupported prepared Tool: {call.name}")
             except Exception as exc:
@@ -433,7 +440,29 @@ class QwenMainAgent:
                 "name": item.call.name,
                 "summary": _tool_summary(item, started=True),
             }
-        results = await asyncio.gather(*(self._execute(item) for item in prepared))
+        section_queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+        async def execute_all() -> list[dict[str, Any]]:
+            try:
+                return await asyncio.gather(*(
+                    self._execute(
+                        item,
+                        section_queue.put_nowait
+                        if item.call.name == "generate_company_profile"
+                        else None,
+                    )
+                    for item in prepared
+                ))
+            finally:
+                section_queue.put_nowait(None)
+
+        results_task = asyncio.create_task(execute_all())
+        while True:
+            section = await section_queue.get()
+            if section is None:
+                break
+            yield section
+        results = await results_task
         for item, result in zip(prepared, results):
             yield {
                 "type": "tool_end",
@@ -463,19 +492,11 @@ class QwenMainAgent:
             )
         )
         if only_successful_profiles:
-            if len(profile_reports) == 1:
-                answer = profile_reports[0][1]
-            else:
-                answer = "\n\n---\n\n".join(
-                    f"## {company_name}完整企业画像报告\n\n{markdown}"
-                    for company_name, markdown in profile_reports
-                )
             logger.info(
                 "%s model response phase=profile_artifact body=%s",
                 AGENT_LOG,
-                answer,
+                "\n\n".join(markdown for _, markdown in profile_reports),
             )
-            yield answer
             return
 
         assistant_calls = [
@@ -536,7 +557,7 @@ class QwenMainAgent:
                 "%s supplemental model response failed; preserving profile artifact",
                 AGENT_LOG,
             )
-            notice = "\n\n补充分析未能完整生成，以下为完整企业画像报告。"
+            notice = "\n\n补充分析未能完整生成。"
             final_answer += notice
             yield notice
 
@@ -551,13 +572,6 @@ class QwenMainAgent:
             final_answer += suffix
             yield suffix
 
-        for company_name, markdown in profile_reports:
-            report = (
-                f"\n\n---\n\n## {company_name}完整企业画像报告\n\n"
-                f"{markdown}"
-            )
-            final_answer += report
-            yield report
         web_errors = [
             result.get("error")
             for item, result in zip(prepared, results)
@@ -593,7 +607,7 @@ def _tool_summary(
         if item.call.name == "generate_company_profile":
             return (
                 f"\n\n正在生成「{item.query}」的完整企业画像，通常需要 2–4 分钟；"
-                "\n企业信息较复杂时可能更久。请耐心等待，完成后将自动展示结果。"
+                "\n完成的报告章节将依次展示。"
             )
         return f"\n\n正在{label}：{item.query}" if item.query else f"正在{label}"
     if result is None or result.get("ok") is False:

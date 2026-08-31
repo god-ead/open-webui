@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from datetime import datetime
 
 from .base import BaseCollector
@@ -41,7 +42,11 @@ class CollectorManager:
         logger.warning("All collectors failed to search for '%s'", company_name)
         return []
 
-    def collect(self, company_id: str) -> RawCompanyData:
+    def collect(
+        self,
+        company_id: str,
+        on_update: Callable[[str, RawCompanyData], None] | None = None,
+    ) -> RawCompanyData:
         """Collect company data from all collectors and merge results.
 
         Each collector is tried independently. Data from successful collectors
@@ -52,9 +57,19 @@ class CollectorManager:
         any_success = False
 
         for collector in self.collectors:
-            result = self._call_with_retry(
-                collector, "collect", company_id=company_id
-            )
+            if on_update is None:
+                result = self._call_with_retry(
+                    collector,
+                    "collect",
+                    company_id=company_id,
+                )
+            else:
+                result = self._call_with_retry(
+                    collector,
+                    "collect",
+                    company_id=company_id,
+                    on_update=on_update,
+                )
             if result is not None:
                 any_success = True
                 self._merge_data(merged, result, collector)
@@ -120,6 +135,7 @@ class CollectorManager:
         # Use the first non-empty company_name encountered
         if not target.company_name and source.company_name:
             target.company_name = source.company_name
+        target.sources.extend(source.sources)
 
         dict_fields = [
             "business_info",
