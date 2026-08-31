@@ -30,7 +30,7 @@ class Settings:
     app_bind_host: str = "0.0.0.0"
     app_port: int = 8050
     langgraph_api_key: str = ""
-    checkpoint_db_path: str = "/app/data/runtime/checkpoints.sqlite3"
+    database_url: str = ""
     business_timeout_seconds: int = 360
 
     qwen_base_url: str = "https://dashscope.aliyuncs.com/api/v1"
@@ -70,7 +70,7 @@ class Settings:
             langgraph_api_key=_env_str(
                 "LANGGRAPH_API_KEY", cls.langgraph_api_key
             ),
-            checkpoint_db_path=_env_str("CHECKPOINT_DB_PATH", cls.checkpoint_db_path),
+            database_url=_env_str("DATABASE_URL", "").strip(),
             business_timeout_seconds=_env_int(
                 "BUSINESS_TIMEOUT_SECONDS", cls.business_timeout_seconds
             ),
@@ -115,6 +115,8 @@ class Settings:
             rag_candidate_k=_env_int("RAG_CANDIDATE_K", cls.rag_candidate_k),
             rag_top_k=_env_int("RAG_TOP_K", cls.rag_top_k),
         )
+        if not settings.database_url:
+            raise ValueError("DATABASE_URL is required")
         if not settings.qwen_task_model_lite:
             raise ValueError("QWEN_TASK_MODEL_LITE is required")
         return settings

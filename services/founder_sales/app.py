@@ -1,9 +1,7 @@
 """销售智能体应用入口 — 组装 LangGraph 运行时和 OpenAI Bridge。"""
 
 import asyncio
-import os
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 import httpx
 from company_profile.application import (
@@ -11,7 +9,7 @@ from company_profile.application import (
     CompanyProfileService,
 )
 from fastapi import FastAPI
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from openai import AsyncOpenAI
 
 from founder_sales.assistant.config import Settings
@@ -38,13 +36,9 @@ setup_logging()
 async def lifespan(service: FastAPI):
     """启动 checkpoint、LLM、知识库和联网搜索运行时。"""
 
-    checkpoint_path = Path(
-        os.getenv("CHECKPOINT_DB_PATH", "./data/runtime/checkpoints.sqlite3")
-    )
-    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-    async with AsyncSqliteSaver.from_conn_string(str(checkpoint_path)) as saver:
+    settings = Settings.from_env()
+    async with AsyncPostgresSaver.from_conn_string(settings.database_url) as saver:
         await saver.setup()
-        settings = Settings.from_env()
         qwen_base_url = qwen_openai_base_url(settings.qwen_base_url)
         http_client = httpx.AsyncClient(
             timeout=settings.business_timeout_seconds

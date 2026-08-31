@@ -39,15 +39,17 @@ services:
       QWEN_API_KEY: ${QWEN_API_KEY:?QWEN_API_KEY is required}
       QWEN_TASK_MODEL_LITE: ${QWEN_TASK_MODEL_LITE:?QWEN_TASK_MODEL_LITE is required}
       COMPANY_PROFILE_LLM_API_KEY: ${COMPANY_PROFILE_LLM_API_KEY:?COMPANY_PROFILE_LLM_API_KEY is required}
+      DATABASE_URL: postgresql://${FOUNDER_SALES_POSTGRES_USER:-founder_sales}:${FOUNDER_SALES_POSTGRES_PASSWORD:?FOUNDER_SALES_POSTGRES_PASSWORD is required}@founder-sales-postgres:5432/${FOUNDER_SALES_POSTGRES_DB:-founder_sales}
       LOG_DIR: /data/app/logs
     volumes:
-      # 宿主机挂载的 checkpoint 根目录
-      - ${FOUNDER_SALES_DATA_DIR:-./data/founder-sales}:/app/data/runtime
       - ${FOUNDER_SALES_LOGS_DIR:-./data/logs/founder-sales-agent}:/data/app/logs
     expose:
       - "8050"
     networks:
       - sales_agent_net
+    depends_on:
+      founder-sales-postgres:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test:
@@ -160,6 +162,27 @@ services:
         - --quiet
         - --eval
         - "db.runCommand({ ping: 1 }).ok"
+    networks:
+      - sales_agent_net
+    restart: unless-stopped
+
+  # 智能体 checkpoint 共享持久化
+  founder-sales-postgres:
+    container_name: founder-sales-postgres
+    image: ${POSTGRES_IMAGE:-postgres:16-alpine}
+    environment:
+      POSTGRES_DB: ${FOUNDER_SALES_POSTGRES_DB:-founder_sales}
+      POSTGRES_USER: ${FOUNDER_SALES_POSTGRES_USER:-founder_sales}
+      POSTGRES_PASSWORD: ${FOUNDER_SALES_POSTGRES_PASSWORD:?FOUNDER_SALES_POSTGRES_PASSWORD is required}
+    volumes:
+      - ${FOUNDER_SALES_POSTGRES_DATA_DIR:-./data/postgres}:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 3s
+      retries: 10
     networks:
       - sales_agent_net
     restart: unless-stopped

@@ -94,7 +94,8 @@ docker compose --env-file .env \
 - `JWT_SECRET`、`JWT_REFRESH_SECRET`、`CREDS_KEY`、`CREDS_IV`：LibreChat 必需密钥。
 - `ADMIN_BIND_IP`、`ADMIN_PANEL_PORT`、`ADMIN_ALLOWED_CIDR`：Admin Panel 内网监听与来源限制。
 - `ADMIN_PANEL_SESSION_SECRET`：Admin Panel 会话加密密钥。
-- `FOUNDER_SALES_DATA_DIR`：checkpoint根目录。
+- `FOUNDER_SALES_POSTGRES_PASSWORD`：checkpoint 数据库密码。
+- `FOUNDER_SALES_POSTGRES_DATA_DIR`：PostgreSQL 数据目录。
 
 默认入口为：
 
@@ -152,7 +153,7 @@ docker compose --env-file .env -f docker-compose.yaml ps
 
 ## 数据与发布
 
-营销智能体通过 `FOUNDER_SALES_DATA_DIR` 持久化 checkpoint；LibreChat 分别持久化 MongoDB、上传与日志。企业画像服务用 `DATA_DIR` 管理 PDF、备份和日志，并用 Compose volume 保存数据库数据。
+营销智能体通过 PostgreSQL 持久化 checkpoint；LibreChat 分别持久化 MongoDB、上传与日志。企业画像服务用 `DATA_DIR` 管理 PDF、备份和日志，并用 Compose volume 保存数据库数据。
 
 修改 `services` 或共享源码后由 CI 构建并推送镜像。正式和测试环境在 Harbor 中选定标签、更新 `.env` 后执行 `docker compose pull` 与 `docker compose up -d --no-build`；只有本地开发叠加 `docker-compose.dev.yaml` 并使用 `--build`。两套部署不要复用项目名或数据目录。
 

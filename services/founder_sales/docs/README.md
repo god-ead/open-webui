@@ -42,7 +42,7 @@ docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d --build
 | API Base URL | `http://localhost:8050/v1` |
 | API Key | `.env` 中 `FOUNDER_SALES_API_KEY` 的值 |
 
-依赖数据（RAG 知识库、embedding 模型、checkpoint）由 `FOUNDER_SALES_DATA_DIR` 指定的宿主机目录挂载（见 [`deploy/sales_agent/docker-compose.yaml`](../../../deploy/sales_agent/docker-compose.yaml)）。
+RAG 知识库与 embedding 模型随镜像提供；checkpoint 由 Compose 内置 PostgreSQL 持久化（见 [`deploy/sales_agent/docker-compose.yaml`](../../../deploy/sales_agent/docker-compose.yaml)）。
 
 ## 远程部署（main/test 分支）
 
@@ -61,7 +61,7 @@ docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d --build
 |---|---|---|
 | `FOUNDER_SALES_API_KEY` | — | 外部调用鉴权 Bearer Key（缺失时启动失败） |
 | `APP_PORT` | 8050 | 服务端口 |
-| `CHECKPOINT_DB_PATH` | `./data/runtime/checkpoints.sqlite3` | 会话 checkpoint 路径 |
+| `DATABASE_URL` | 必填 | PostgreSQL checkpoint 连接地址 |
 | `QWEN_BASE_URL` | `https://dashscope.aliyuncs.com/api/v1` | DashScope API 地址 |
 | `QWEN_API_KEY` | — | DashScope API Key |
 | `QWEN_AGENT_MODEL` | `qwen3.7-plus` | 主 Agent 工具调用模型 |

@@ -12,7 +12,6 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     APP_PORT=8050 \
-    CHECKPOINT_DB_PATH=./data/runtime/checkpoints.sqlite3 \
     RAG_DEVICE=cpu
 
 WORKDIR /app
@@ -68,9 +67,6 @@ RUN --mount=type=secret,id=minio_access_key \
         "${EMBED_MODEL_PATH}" \
         --recursive \
         --no-progress;
-
-
-RUN mkdir -p ./data/runtime
 
 EXPOSE 8050
 
