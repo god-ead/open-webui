@@ -81,7 +81,7 @@ class VisitPlanTool:
         return plan
 
     async def generate(self, visit_context: str) -> dict[str, Any]:
-        """基于自包含拜访上下文生成完整计划，主模型失败时降级一次。"""
+        """基于自包含拜访上下文生成计划，并依次尝试候选模型。"""
 
         if not isinstance(visit_context, str):
             raise ValueError("visit_context 必须是字符串")
@@ -95,30 +95,27 @@ class VisitPlanTool:
         )
         messages = _messages(normalized_context, hits)
         primary_model = self.settings.qwen_visit_model.strip()
-        fallback_model = self.settings.qwen_fallback_model.strip()
-        try:
-            plan = await self._complete(primary_model, messages)
-            model = primary_model
-            used_fallback = False
-        except Exception as exc:
-            if not fallback_model or fallback_model == primary_model:
-                raise
-            logger.warning(
-                "%s model unavailable model=%s error=%s -> fallback=%s",
-                VISIT_PLAN_LOG,
-                primary_model,
-                exc,
-                fallback_model,
-            )
-            plan = await self._complete(fallback_model, messages)
-            model = fallback_model
-            used_fallback = True
+        models = self.settings.qwen_model_candidates(primary_model)
+        for index, model in enumerate(models):
+            try:
+                plan = await self._complete(model, messages)
+                break
+            except Exception as exc:
+                if index == len(models) - 1:
+                    raise
+                logger.warning(
+                    "%s model unavailable model=%s error=%s -> fallback=%s",
+                    VISIT_PLAN_LOG,
+                    model,
+                    exc,
+                    models[index + 1],
+                )
 
         return {
             "visit_context": normalized_context,
             "plan": plan,
             "model": model,
-            "used_fallback": used_fallback,
+            "used_fallback": model != primary_model,
             "knowledge_sources": list(
                 dict.fromkeys(
                     str(hit.source_name)

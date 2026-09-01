@@ -5,7 +5,10 @@ from __future__ import annotations
 from typing import NotRequired
 
 from langgraph.graph import MessagesState
+
+
 class AssistantState(MessagesState):
     """根图与子图共享的 LangGraph 状态。"""
 
     title: NotRequired[str]
+    conversation_summary: NotRequired[str]

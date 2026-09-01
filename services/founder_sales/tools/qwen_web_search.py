@@ -110,6 +110,7 @@ async def web_search(
     query: str,
     *,
     client: QwenWebSearch,
+    model: str | None = None,
     max_sources: int = 10,
 ) -> WebContext:
     """执行一次 agent 搜索并规范化供应商结果。"""
@@ -120,8 +121,9 @@ async def web_search(
     if max_sources < 1:
         raise ValueError("max_sources must be positive")
 
+    selected_model = model or client.settings.qwen_search_model
     request = {
-        "model": client.settings.qwen_search_model,
+        "model": selected_model,
         "input": {
             "messages": [
                 {
@@ -158,7 +160,7 @@ async def web_search(
         logger.info(
             "%s qwen search start model=%s strategy=agent",
             WEB_DEBUG,
-            client.settings.qwen_search_model,
+            selected_model,
         )
         async with client.client.stream(
             "POST",
@@ -303,22 +305,33 @@ class QwenWebSearch:
         self.url = _generation_url(settings.qwen_base_url)
 
     async def search(self, query: str, *, max_sources: int = 10) -> WebContext:
-        """执行联网搜索；返回受控错误时按配置有限重试。"""
+        """执行联网搜索；主模型耗尽重试后依次尝试 fallback 模型。"""
 
-        total_attempts = max(0, self.settings.qwen_search_retry_count) + 1
-        for attempt in range(1, total_attempts + 1):
-            result = await web_search(query, client=self, max_sources=max_sources)
+        primary_model = self.settings.qwen_search_model.strip()
+        models = [primary_model] * (
+            max(0, self.settings.qwen_search_retry_count) + 1
+        )
+        models.extend(self.settings.qwen_model_candidates(primary_model)[1:])
+
+        for attempt, model in enumerate(models, start=1):
+            result = await web_search(
+                query,
+                client=self,
+                model=model,
+                max_sources=max_sources,
+            )
             if result.error is None:
                 return result
 
-            will_retry = attempt < total_attempts
+            will_retry = attempt < len(models)
             logger.warning(
-                "%s qwen search failed attempt=%d/%d error=%r "
+                "%s qwen search failed model=%s attempt=%d/%d error=%r "
                 "supplier_code=%r supplier_message=%r request_id=%r "
                 "will_retry=%s",
                 WEB_DEBUG,
+                model,
                 attempt,
-                total_attempts,
+                len(models),
                 result.error,
                 result.supplier_code,
                 result.supplier_message,

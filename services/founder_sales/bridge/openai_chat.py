@@ -17,6 +17,7 @@ from langchain_core.messages import BaseMessage, HumanMessage
 from pydantic import BaseModel
 
 from founder_sales.langgraph_runtime import LangGraphRuntime
+from founder_sales.main_agent_graph import ConversationHistoryLimitError
 
 
 MODEL_ID = "founder-sales-assistant"
@@ -120,6 +121,11 @@ async def _openai_events(
                     )
     except (asyncio.CancelledError, GeneratorExit):
         raise
+    except ConversationHistoryLimitError:
+        yield _sse(
+            completion_id,
+            reasoning_content="当前对话最近消息已超过上下文限制，请缩短消息后重试。\n",
+        )
     except Exception:
         logger.exception("%s streaming chat failed", WEB_DEBUG)
         yield _sse(
@@ -242,6 +248,14 @@ async def chat(
             async for event in events:
                 if isinstance(event, str):
                     answer += event
+        except ConversationHistoryLimitError:
+            return JSONResponse(
+                status_code=413,
+                content={"error": {
+                    "message": "当前对话最近消息已超过上下文限制，请缩短消息后重试。",
+                    "type": "context_length_exceeded",
+                }},
+            )
         except Exception:
             logger.exception("%s non-stream chat failed thread_id=%s", WEB_DEBUG, thread_id)
             return JSONResponse(

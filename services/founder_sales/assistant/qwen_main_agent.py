@@ -241,26 +241,26 @@ class QwenMainAgent:
     async def _deltas_with_fallback(
         self, payload: dict[str, Any]
     ) -> AsyncIterator[Mapping[str, Any]]:
-        """请求主模型；尚未产出任何增量即失败时，静默改用 fallback 模型重试一次。"""
-        started = False
-        try:
-            async for delta in self._deltas(payload):
-                started = True
-                yield delta
-        except Exception as exc:
-            if started or not self.settings.qwen_fallback_model:
-                raise
-            logger.warning(
-                "%s model unavailable model=%s error=%s -> fallback=%s",
-                AGENT_LOG,
-                payload["model"],
-                exc,
-                self.settings.qwen_fallback_model,
-            )
-            async for delta in self._deltas(
-                {**payload, "model": self.settings.qwen_fallback_model}
-            ):
-                yield delta
+        """依次请求候选模型；任一模型开始输出后不再继续降级。"""
+
+        models = self.settings.qwen_model_candidates(payload["model"])
+        for index, model in enumerate(models):
+            started = False
+            try:
+                async for delta in self._deltas({**payload, "model": model}):
+                    started = True
+                    yield delta
+                return
+            except Exception as exc:
+                if started or index == len(models) - 1:
+                    raise
+                logger.warning(
+                    "%s model unavailable model=%s error=%s -> fallback=%s",
+                    AGENT_LOG,
+                    model,
+                    exc,
+                    models[index + 1],
+                )
 
     def _payload(
         self,
