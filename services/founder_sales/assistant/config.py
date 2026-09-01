@@ -45,8 +45,8 @@ class Settings:
     qwen_timeout_seconds: int = 60
 
     history_max_messages: int = 20
-    history_max_tokens: int = 65534
-    history_summary_max_tokens: int = 1024
+    history_max_tokens: int = 131071
+    history_summary_max_tokens: int = 2048
 
     company_profile_llm_api_key: str = ""
     company_profile_llm_base_url: str = (
