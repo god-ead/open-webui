@@ -6,7 +6,7 @@
 founder-sales/
 ├── app.py                       # 应用入口：组装 LangGraphRuntime 与 OpenAI Bridge
 ├── langgraph_runtime.py         # LangGraph 会话、checkpoint、幂等和流事件
-├── main_agent_graph.py          # LangGraph 单节点图（main_agent → END）
+├── main_agent_graph.py          # LangGraph 单节点图（滚动摘要 + main_agent → END）
 ├── requirements.txt             # Python 依赖
 ├── Dockerfile                   # 镜像构建（Python 3.11 slim）
 ├── docker-compose.yaml          # 本地开发：单独构建并启动，:8050 对外
@@ -21,9 +21,9 @@ founder-sales/
 ├── assistant/                   # 运行时契约
 │   ├── __init__.py              #   对外 re-export：Settings / AssistantState
 │   ├── config.py                #   纯环境变量配置（Settings.from_env）
-│   ├── state.py                 #   LangGraph 状态：AssistantState（messages + title）
+│   ├── state.py                 #   LangGraph 状态：messages + title + conversation_summary
 │   ├── qwen_main_agent.py       #   Qwen 主 Agent：工具调用循环 + fallback 静默降级
-│   └── qwen_task_model.py       #   Qwen 轻量任务模型：标题等辅助任务
+│   └── qwen_task_model.py       #   Qwen 轻量任务模型：标题与单会话滚动摘要
 │
 ├── bridge/                      # 外部前端协议 Adapter
 │   ├── __init__.py              #   re-export OpenAI router
@@ -56,16 +56,16 @@ founder-sales/
 | [app.py](../app.py) | 生命周期装配 checkpoint、QwenMainAgent、QwenTaskModel、KnowledgeService 和 Tool，并将 `LangGraphRuntime` 注入 OpenAI Bridge |
 | [langgraph_runtime.py](../langgraph_runtime.py) | `stream_turn()` interface；封装 LangGraph 执行、checkpoint、MessageID 幂等和会话锁，产出运行状态及原始图事件 |
 | [bridge/openai_chat.py](../bridge/openai_chat.py) | `/healthz`、`/v1/models`、`/v1/chat/completions`；Bearer 与身份 Header 校验；OpenAI messages 到 LangGraph messages、LangGraph 流事件到 OpenAI SSE 的转换 |
-| [main_agent_graph.py](../main_agent_graph.py) | 单节点 `main_agent` 图：转发过程事件，仅把最终回答写入 checkpoint |
+| [main_agent_graph.py](../main_agent_graph.py) | 单节点 `main_agent` 图：超限时更新独立摘要并保留最近 5 条消息；转发过程事件并把最终回答写入 checkpoint |
 
 ### assistant/ — 运行时契约
 
 | 文件 | 职责 |
 |---|---|
 | [config.py](../assistant/config.py) | `Settings` 数据类 + `from_env()`；集中解析有序 fallback 模型，全部 QWEN_*/RAG_*/鉴权/checkpoint 配置在此定义，模型身份（model_id/display_name）由代码持有 |
-| [state.py](../assistant/state.py) | `AssistantState`（Conversation History + Conversation Title） |
+| [state.py](../assistant/state.py) | `AssistantState`（Conversation History + Conversation Summary + Conversation Title） |
 | [qwen_main_agent.py](../assistant/qwen_main_agent.py) | `QwenMainAgent`：OpenAI 兼容 Chat Completions 流式调用；校验并执行 Tool；最多一轮 Tool Call 后组织最终回答；主模型失败且未产出增量时依次切换 fallback 模型 |
-| [qwen_task_model.py](../assistant/qwen_task_model.py) | `QwenTaskModel`：独立执行标题等不属于主 Agent 的轻量模型任务 |
+| [qwen_task_model.py](../assistant/qwen_task_model.py) | `QwenTaskModel`：独立执行标题与单会话滚动摘要等轻量模型任务 |
 
 ### tools/ — Tool 实现
 

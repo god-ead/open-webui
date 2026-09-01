@@ -1,4 +1,4 @@
-"""Qwen 轻量任务模型。"""
+"""Qwen 轻量任务模型 — 生成会话标题与单会话滚动摘要。"""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ _TITLE_TIMEOUT_SECONDS = 10
 
 
 class QwenTaskModel:
-    """执行不属于主 Agent 的轻量模型任务。"""
+    """执行会话标题与单会话滚动摘要等内部轻量模型任务。"""
 
     def __init__(self, settings: Settings, client: AsyncOpenAI) -> None:
         self.settings = settings
@@ -47,6 +47,41 @@ class QwenTaskModel:
         )
         content = response.choices[0].message.content
         return str(content)
+
+    async def summarize_conversation(
+        self,
+        messages: list[dict[str, str]],
+        previous_summary: str | None = None,
+    ) -> str:
+        """合并已有摘要与较早消息，生成新的单会话内部摘要。"""
+
+        roles = {"user": "用户", "assistant": "助手", "system": "系统"}
+        dialogue = "\n".join(
+            f"{roles.get(message['role'], message['role'])}：{message['content']}"
+            for message in messages
+        )
+        existing = previous_summary.strip() if previous_summary else "无"
+        response = await self.client.chat.completions.create(
+            model=self.settings.qwen_task_model_lite,
+            messages=[{
+                "role": "user",
+                "content": (
+                    "请把以下单个会话的已有摘要与新增早期对话合并为一份内部摘要。\n"
+                    "保留用户目标、已确认事实、约束、偏好、关键结论和未完成事项；"
+                    "不要编造信息，不要复述寒暄，只输出摘要正文。\n\n"
+                    f"<已有摘要>\n{existing}\n</已有摘要>\n\n"
+                    f"<新增早期对话>\n{dialogue}\n</新增早期对话>"
+                ),
+            }],
+            stream=False,
+            extra_body={"enable_thinking": False},
+            max_tokens=self.settings.history_summary_max_tokens,
+            timeout=self.settings.qwen_timeout_seconds,
+        )
+        content = str(response.choices[0].message.content or "").strip()
+        if not content:
+            raise RuntimeError("conversation summarization returned empty content")
+        return content
 
 
 __all__ = ["QwenTaskModel"]

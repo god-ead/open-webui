@@ -80,7 +80,7 @@ async def lifespan(service: FastAPI):
                 company_profile,
             )
             task_model = QwenTaskModel(settings, qwen_client)
-            graph = build_main_agent_graph(saver, agent)
+            graph = build_main_agent_graph(saver, agent, task_model, settings)
             service.state.langgraph_runtime = LangGraphRuntime(graph)
             service.state.qwen_task_model = task_model
             yield

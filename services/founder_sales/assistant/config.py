@@ -40,8 +40,13 @@ class Settings:
     qwen_agent_model: str = "qwen3.6-plus"
     qwen_visit_model: str = "qwen3.6-plus"
     qwen_fallback_model: str = "qwen3.5-plus"
+    # 轻量模型处理会话标题与单会话滚动摘要，避免占用主 Agent 模型。
     qwen_task_model_lite: str = ""
     qwen_timeout_seconds: int = 60
+
+    history_max_messages: int = 20
+    history_max_tokens: int = 65534
+    history_summary_max_tokens: int = 1024
 
     company_profile_llm_api_key: str = ""
     company_profile_llm_base_url: str = (
@@ -105,6 +110,15 @@ class Settings:
             qwen_timeout_seconds=_env_int(
                 "QWEN_TIMEOUT_SECONDS", cls.qwen_timeout_seconds
             ),
+            history_max_messages=_env_int(
+                "HISTORY_MAX_MESSAGES", cls.history_max_messages
+            ),
+            history_max_tokens=_env_int(
+                "HISTORY_MAX_TOKENS", cls.history_max_tokens
+            ),
+            history_summary_max_tokens=_env_int(
+                "HISTORY_SUMMARY_MAX_TOKENS", cls.history_summary_max_tokens
+            ),
             company_profile_llm_api_key=_env_str(
                 "COMPANY_PROFILE_LLM_API_KEY",
                 cls.company_profile_llm_api_key,
@@ -127,4 +141,10 @@ class Settings:
         )
         if not settings.qwen_task_model_lite:
             raise ValueError("QWEN_TASK_MODEL_LITE is required")
+        if settings.history_max_messages <= 5:
+            raise ValueError("HISTORY_MAX_MESSAGES must be greater than 5")
+        if settings.history_max_tokens <= 0:
+            raise ValueError("HISTORY_MAX_TOKENS must be greater than 0")
+        if settings.history_summary_max_tokens <= 0:
+            raise ValueError("HISTORY_SUMMARY_MAX_TOKENS must be greater than 0")
         return settings
