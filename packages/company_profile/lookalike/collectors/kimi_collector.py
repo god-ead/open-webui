@@ -434,6 +434,8 @@ class QwenCollector(BaseCollector):
             _SEARCH_MATCHES_PROMPT.format(company_name=company_name),
             company_id=company_name,
             round_label="search",
+            enable_search=False,
+            enable_thinking=False,
         )
         result = call_result.payload
         matches = self._parse_search_matches(result)
@@ -898,6 +900,8 @@ class QwenCollector(BaseCollector):
         prompt: str,
         company_id: str = "-",
         round_label: str = "-",
+        enable_search: bool = True,
+        enable_thinking: bool | None = None,
     ) -> _QwenCallResult:
         """
         使用统一的应用层重试策略调用 Qwen
@@ -909,6 +913,10 @@ class QwenCollector(BaseCollector):
                 - 当前企业名称或标识，用于关联并发请求日志
             round_label:
                 - 当前请求所属轮次，用于区分并发执行的提示词
+            enable_search:
+                - 是否启用 Qwen 联网搜索
+            enable_thinking:
+                - 是否启用思考模式；None 表示使用模型默认配置
 
         重试策略：
             - 最多调用 MAX_QWEN_ATTEMPTS 次
@@ -924,7 +932,11 @@ class QwenCollector(BaseCollector):
         last_error: str | None = None
         for attempt in range(1, MAX_QWEN_ATTEMPTS + 1):
             try:
-                result = self._call_qwen_once(prompt)
+                result = self._call_qwen_once(
+                    prompt,
+                    enable_search=enable_search,
+                    enable_thinking=enable_thinking,
+                )
                 if result:
                     return _QwenCallResult(
                         payload=result,
@@ -1014,12 +1026,26 @@ class QwenCollector(BaseCollector):
             self._transport_local.session = session
         return session
 
-    def _call_qwen_once(self, prompt: str) -> dict[str, Any] | None:
+    def _call_qwen_once(
+        self,
+        prompt: str,
+        *,
+        enable_search: bool = True,
+        enable_thinking: bool | None = None,
+    ) -> dict[str, Any] | None:
         """为提示词补充当前日期，并通过可用传输方式执行一次 Qwen 请求。"""
         prompt = f"当前日期：{date.today().isoformat()}。\n{prompt}"
         if self._openai_client_factory is not None:
-            return self._call_via_openai(prompt)
-        return self._call_via_requests(prompt)
+            return self._call_via_openai(
+                prompt,
+                enable_search=enable_search,
+                enable_thinking=enable_thinking,
+            )
+        return self._call_via_requests(
+            prompt,
+            enable_search=enable_search,
+            enable_thinking=enable_thinking,
+        )
 
     def _call_qwen_text_once(self, prompt: str) -> str | None:
         """为提示词补充当前日期，并返回 Qwen 的原始文本响应。"""
@@ -1028,7 +1054,13 @@ class QwenCollector(BaseCollector):
             return self._call_via_openai_content(prompt)
         return self._call_via_requests_content(prompt)
 
-    def _call_via_openai(self, prompt: str) -> dict[str, Any] | None:
+    def _call_via_openai(
+        self,
+        prompt: str,
+        *,
+        enable_search: bool = True,
+        enable_thinking: bool | None = None,
+    ) -> dict[str, Any] | None:
         """
         使用当前线程专用的 OpenAI 客户端调用 Qwen
 
@@ -1044,12 +1076,22 @@ class QwenCollector(BaseCollector):
         异常：
             - 网络错误、超时和服务端错误向上抛出，由应用层统一重试
         """
-        content = self._call_via_openai_content(prompt)
+        content = self._call_via_openai_content(
+            prompt,
+            enable_search=enable_search,
+            enable_thinking=enable_thinking,
+        )
         if not content:
             return None
         return self._extract_json(content)
 
-    def _call_via_openai_content(self, prompt: str) -> str | None:
+    def _call_via_openai_content(
+        self,
+        prompt: str,
+        *,
+        enable_search: bool = True,
+        enable_thinking: bool | None = None,
+    ) -> str | None:
         """Return raw text content from the OpenAI-compatible Qwen client."""
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": _SYSTEM_PROMPT},
@@ -1057,23 +1099,36 @@ class QwenCollector(BaseCollector):
         ]
         client = self._get_openai_client()
         if client is None:
-            return self._call_via_requests_content(prompt)
+            return self._call_via_requests_content(
+                prompt,
+                enable_search=enable_search,
+                enable_thinking=enable_thinking,
+            )
+
+        extra_body: dict[str, Any] = {"enable_search": enable_search}
+        if enable_search:
+            extra_body["search_options"] = {
+                "search_strategy": "turbo",
+                "enable_search_extension": True,
+            }
+        if enable_thinking is not None:
+            extra_body["enable_thinking"] = enable_thinking
 
         response = client.chat.completions.create(
             model=self._model,
             messages=messages,
-            extra_body={
-                "enable_search": True,
-                "search_options": {
-                    "search_strategy": "turbo",
-                    "enable_search_extension": True,
-                },
-            },
+            extra_body=extra_body,
         )
         choice = response.choices[0]
         return (choice.message.content or "").strip()
 
-    def _call_via_requests(self, prompt: str) -> dict[str, Any] | None:
+    def _call_via_requests(
+        self,
+        prompt: str,
+        *,
+        enable_search: bool = True,
+        enable_thinking: bool | None = None,
+    ) -> dict[str, Any] | None:
         """
         使用当前线程专用的 requests 会话调用 Qwen
 
@@ -1090,12 +1145,22 @@ class QwenCollector(BaseCollector):
             - 网络错误、超时、非成功 HTTP 状态和响应解析错误向上抛出，
               由应用层统一重试
         """
-        content = self._call_via_requests_content(prompt)
+        content = self._call_via_requests_content(
+            prompt,
+            enable_search=enable_search,
+            enable_thinking=enable_thinking,
+        )
         if not content:
             return None
         return self._extract_json(content)
 
-    def _call_via_requests_content(self, prompt: str) -> str | None:
+    def _call_via_requests_content(
+        self,
+        prompt: str,
+        *,
+        enable_search: bool = True,
+        enable_thinking: bool | None = None,
+    ) -> str | None:
         """Return raw text content from the requests-based Qwen transport."""
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": _SYSTEM_PROMPT},
@@ -1108,9 +1173,11 @@ class QwenCollector(BaseCollector):
         payload: dict[str, Any] = {
             "model": self._model,
             "messages": messages,
-            "enable_search": True,
+            "enable_search": enable_search,
             "stream": False,
         }
+        if enable_thinking is not None:
+            payload["enable_thinking"] = enable_thinking
 
         resp = self._get_session().post(
             f"{self._base_url}/chat/completions",
