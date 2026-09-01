@@ -15,15 +15,15 @@ Open WebUI ── OpenAI 兼容 ──▶ bridge/openai_chat.py
                                   │
                           QwenMainAgent（QWEN_AGENT_MODEL）
                           ├── web_search 工具（联网搜索）
-                          │      └─ QwenWebSearch（QWEN_SEARCH_MODEL 生成查询词/整理结果）
+                          │      └─ QwenWebSearch（QWEN_SEARCH_MODEL 重试后依次降级）
                           ├── search_sales_knowledge 工具（销售知识 RAG）
                           │      └─ KnowledgeService（FAISS 召回 + SQLite 取 chunk，reranker 可选）
                           └── generate_visit_plan 工具（标准拜访计划）
                                  ├─ KnowledgeService（复用销售知识检索）
-                                 └─ QWEN_VISIT_MODEL（失败时使用 QWEN_FALLBACK_MODEL）
+                                 └─ QWEN_VISIT_MODEL（失败时依次使用 fallback 模型）
 ```
 
-- **主模型**：`QWEN_AGENT_MODEL` 承担工具调用与最终回答；请求失败（未产出内容时）自动静默切换 `QWEN_FALLBACK_MODEL` 重试，仅记录日志。
+- **主模型**：`QWEN_AGENT_MODEL` 承担工具调用与最终回答；请求失败（未产出内容时）按 `QWEN_FALLBACK_MODEL` 的配置顺序静默降级，仅记录日志。
 - **会话**：SQLite checkpoint 独立持久化完整对话历史；每次请求都在当前 Conversation Thread 上启动新 run。
 - **流式输出**：SSE 同时输出正文（`content`）与过程状态（`reasoning_content`，如"正在分析用户需求"）。
 
@@ -66,10 +66,10 @@ docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d --build
 | `QWEN_API_KEY` | — | DashScope API Key |
 | `QWEN_AGENT_MODEL` | `qwen3.7-plus` | 主 Agent 工具调用模型 |
 | `QWEN_VISIT_MODEL` | `qwen3.7-plus` | 拜访计划 Tool 使用的专用 Qwen 模型 |
-| `QWEN_FALLBACK_MODEL` | `qwen3.5-plus` | 主 Agent 或拜访计划专用模型不可用时的静默降级模型（留空则禁用） |
+| `QWEN_FALLBACK_MODEL` | `qwen3.5-plus` | 主 Agent、拜访计划和联网搜索共用的有序 fallback 模型；多个模型用英文逗号分隔，留空则禁用 |
 | `QWEN_TASK_MODEL_LITE` | 必填 | 标题等轻量任务使用的 Qwen 模型 |
 | `QWEN_SEARCH_MODEL` | `qwen3.5-plus` | web_search 工具内部的搜索子模型 |
-| `QWEN_SEARCH_RETRY_COUNT` | 2 | 联网搜索返回受控错误时的额外重试次数 |
+| `QWEN_SEARCH_RETRY_COUNT` | 2 | 联网搜索主模型返回受控错误时的额外重试次数；耗尽后依次尝试 fallback 模型 |
 | `QWEN_TIMEOUT_SECONDS` | 60 | 模型请求超时 |
 | `BUSINESS_TIMEOUT_SECONDS` | 360 | httpx 客户端总超时 |
 | `RAG_STORE_PATH` | `data/sales_rag.sqlite3` | 知识库 chunk 存储 |

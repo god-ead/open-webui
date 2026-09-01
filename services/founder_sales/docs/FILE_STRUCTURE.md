@@ -62,9 +62,9 @@ founder-sales/
 
 | 文件 | 职责 |
 |---|---|
-| [config.py](../assistant/config.py) | `Settings` 数据类 + `from_env()`；全部 QWEN_*/RAG_*/鉴权/checkpoint 配置在此定义，模型身份（model_id/display_name）由代码持有 |
+| [config.py](../assistant/config.py) | `Settings` 数据类 + `from_env()`；集中解析有序 fallback 模型，全部 QWEN_*/RAG_*/鉴权/checkpoint 配置在此定义，模型身份（model_id/display_name）由代码持有 |
 | [state.py](../assistant/state.py) | `AssistantState`（Conversation History + Conversation Title） |
-| [qwen_main_agent.py](../assistant/qwen_main_agent.py) | `QwenMainAgent`：OpenAI 兼容 Chat Completions 流式调用；校验并执行 Tool；最多一轮 Tool Call 后组织最终回答；主模型失败且未产出增量时切换 fallback 模型 |
+| [qwen_main_agent.py](../assistant/qwen_main_agent.py) | `QwenMainAgent`：OpenAI 兼容 Chat Completions 流式调用；校验并执行 Tool；最多一轮 Tool Call 后组织最终回答；主模型失败且未产出增量时依次切换 fallback 模型 |
 | [qwen_task_model.py](../assistant/qwen_task_model.py) | `QwenTaskModel`：独立执行标题等不属于主 Agent 的轻量模型任务 |
 
 ### tools/ — Tool 实现
@@ -73,8 +73,8 @@ founder-sales/
 |---|---|
 | [company_profile.py](../tools/company_profile.py) | `CompanyProfileTool`：在线程中调用同步企业画像核心，并返回 Markdown 报告 |
 | [knowledge.py](../tools/knowledge.py) | `KnowledgeService`：启动期硬加载 embedding 模型与 FAISS 索引（缺任一文件启动失败）；`search()` 按 FAISS 相似度召回，`RERANKER_MODEL_PATH` 非空时用 CrossEncoder 重排，否则按相似度直排取 top_k |
-| [qwen_web_search.py](../tools/qwen_web_search.py) | `QwenWebSearch`：调用 `QWEN_SEARCH_MODEL` 联网搜索，规范化候选回答、来源和调用元数据，并对受控错误进行有限重试 |
-| [visit_plan.py](../tools/visit_plan.py) | `VisitPlanTool`：检索销售知识，调用 `QWEN_VISIT_MODEL` 生成完整拜访计划，失败时切换 `QWEN_FALLBACK_MODEL` |
+| [qwen_web_search.py](../tools/qwen_web_search.py) | `QwenWebSearch`：调用 `QWEN_SEARCH_MODEL` 联网搜索，规范化候选回答、来源和调用元数据；主模型受控错误重试耗尽后依次使用 fallback 模型 |
+| [visit_plan.py](../tools/visit_plan.py) | `VisitPlanTool`：检索销售知识，调用 `QWEN_VISIT_MODEL` 生成完整拜访计划，失败时依次使用 fallback 模型 |
 | [contact_search.py](../tools/contact_search.py) | `ContactSearch`：保留的联系方式搜索实现；当前不导出、不注册给主 Agent |
 | [information_organizer.py](../tools/information_organizer.py) | `QwenInformationOrganizer`：联系方式搜索使用的 JSON Schema 信息整理模块 |
 

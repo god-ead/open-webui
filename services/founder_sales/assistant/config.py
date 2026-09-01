@@ -61,6 +61,16 @@ class Settings:
     model_id: str = field(init=False, default="founder-sales-assistant")
     display_name: str = field(init=False, default="方正销售助手")
 
+    def qwen_model_candidates(self, primary_model: str) -> tuple[str, ...]:
+        """返回主模型及按配置顺序排列的非空去重 fallback 模型。"""
+
+        models = [primary_model.strip()]
+        for value in self.qwen_fallback_model.split(","):
+            model = value.strip()
+            if model and model not in models:
+                models.append(model)
+        return tuple(models)
+
     @classmethod
     def from_env(cls) -> Settings:
         """从文档约定的环境变量构建配置。"""
