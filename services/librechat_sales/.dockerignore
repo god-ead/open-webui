@@ -1,0 +1,6 @@
+.git
+.gitlab-ci.yml
+README.md
+docs
+tests
+*.log

@@ -1,0 +1,175 @@
+# Nginx 通过 /sales-agent 暴露 LibreChat，LibreChat 内部直连 founder_sales。
+services:
+  founder-sales-nginx:
+    container_name: founder-sales-nginx
+    image: ${NGINX_IMAGE:-nginx:1.27-alpine}
+    ports:
+      - "${SALES_AGENT_PORT:-3030}:8080"
+      - "${ADMIN_BIND_IP:?ADMIN_BIND_IP is required}:${ADMIN_PANEL_PORT:-3031}:8081"
+    environment:
+      PUBLIC_BASE_PATH: ${PUBLIC_BASE_PATH:?PUBLIC_BASE_PATH is required}
+      ADMIN_ALLOWED_CIDR: ${ADMIN_ALLOWED_CIDR:?ADMIN_ALLOWED_CIDR is required}
+    volumes:
+      - ./nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ${NGINX_LOGS_DIR:-./data/logs/nginx}:/data/app/logs
+    depends_on:
+      founder-sales-librechat:
+        condition: service_healthy
+    networks:
+      - sales_agent_net
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -q -O /dev/null "http://127.0.0.1:8080$${PUBLIC_BASE_PATH}/"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 智能体服务
+  founder-sales-agent:
+    container_name: founder-sales-agent
+    image: ${FOUNDER_SALES_IMAGE:?FOUNDER_SALES_IMAGE is required}
+    env_file:
+      - .env
+    environment:
+      TZ: Asia/Shanghai
+      APP_PORT: 8050
+      FOUNDER_SALES_API_KEY: ${FOUNDER_SALES_API_KEY:?FOUNDER_SALES_API_KEY is required}
+      QWEN_API_KEY: ${QWEN_API_KEY:?QWEN_API_KEY is required}
+      QWEN_TASK_MODEL_LITE: ${QWEN_TASK_MODEL_LITE:?QWEN_TASK_MODEL_LITE is required}
+      COMPANY_PROFILE_LLM_API_KEY: ${COMPANY_PROFILE_LLM_API_KEY:?COMPANY_PROFILE_LLM_API_KEY is required}
+      LOG_DIR: /data/app/logs
+    volumes:
+      # 宿主机挂载的 checkpoint 根目录
+      - ${FOUNDER_SALES_DATA_DIR:-./data/founder-sales}:/app/data/runtime
+      - ${FOUNDER_SALES_LOGS_DIR:-./data/logs/founder-sales-agent}:/data/app/logs
+    expose:
+      - "8050"
+    networks:
+      - sales_agent_net
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8050/healthz', timeout=3)
+      interval: 15s
+      timeout: 5s
+      start_period: 120s
+      retries: 5
+
+  # LibreChat前端
+  founder-sales-librechat:
+    container_name: founder-sales-librechat
+    image: ${LIBRECHAT_IMAGE:?LIBRECHAT_IMAGE is required}
+    expose:
+      - "3080"
+    env_file:
+      - .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3080
+      MONGO_URI: mongodb://founder-sales-librechat-mongodb:27017/LibreChat
+      DOMAIN_CLIENT: ${PUBLIC_ORIGIN}${PUBLIC_BASE_PATH:?PUBLIC_BASE_PATH is required}
+      DOMAIN_SERVER: ${PUBLIC_ORIGIN}${PUBLIC_BASE_PATH:?PUBLIC_BASE_PATH is required}
+      SEARCH: false
+      ENDPOINTS: custom
+      # 登录设置及CRM登录接入
+      ALLOW_EMAIL_LOGIN: ${ALLOW_EMAIL_LOGIN:-false}
+      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-false}
+      CRM_AES_KEY: ${CRM_AES_KEY:?CRM_AES_KEY is required}
+      CRM_AES_IV: ${CRM_AES_IV:?CRM_AES_IV is required}
+      CRM_TOKEN_MAX_AGE_SECONDS: ${CRM_TOKEN_MAX_AGE_SECONDS:-10}
+      CRM_ALLOWED_ORIGINS: ${CRM_ALLOWED_ORIGINS:?CRM_ALLOWED_ORIGINS is required}
+      CRM_AUTH_DEBUG_ERRORS: ${CRM_AUTH_DEBUG_ERRORS:-false}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET is required}
+      CREDS_KEY: ${CREDS_KEY:?CREDS_KEY is required}
+      CREDS_IV: ${CREDS_IV:?CREDS_IV is required}
+      LIBRECHAT_LOG_DIR: /data/app/logs
+      LOG_TO_FILE: "true"
+      DEBUG_LOGGING: "true"
+    volumes:
+      - ./librechat.yaml:/app/librechat.yaml:ro
+      - ${LIBRACHAT_UPLOADS_DIR:-./data/uploads}:/app/uploads
+      - ${LIBRECHAT_LOGS_DIR:-./data/logs/librechat}:/data/app/logs
+    depends_on:
+      founder-sales-librechat-mongodb:
+        condition: service_healthy
+      founder-sales-agent:
+        condition: service_healthy
+    networks:
+      - sales_agent_net
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          require('http').get(
+          'http://127.0.0.1:3080/', response =>
+          process.exit(response.statusCode === 200 ? 0 : 1)
+          ).on('error', () => process.exit(1))
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+
+  # LibreChat 独立管理面板；仅通过 Nginx 的内网管理端口访问。
+  founder-sales-admin-panel:
+    profiles:
+      - admin
+    container_name: founder-sales-admin-panel
+    image: ${ADMIN_PANEL_IMAGE:?ADMIN_PANEL_IMAGE is required}
+    environment:
+      PORT: 3000
+      SESSION_SECRET: ${ADMIN_PANEL_SESSION_SECRET:?ADMIN_PANEL_SESSION_SECRET is required}
+      API_SERVER_URL: http://founder-sales-librechat:3080
+      VITE_API_BASE_URL: ${PUBLIC_ORIGIN}${PUBLIC_BASE_PATH:?PUBLIC_BASE_PATH is required}
+      ADMIN_SSO_ONLY: "false"
+      ADMIN_SSO_ENABLED: "false"
+      SESSION_COOKIE_SECURE: "false"
+    expose:
+      - "3000"
+    depends_on:
+      founder-sales-librechat:
+        condition: service_healthy
+    networks:
+      - sales_agent_net
+    restart: unless-stopped
+
+  founder-sales-librechat-mongodb:
+    container_name: founder-sales-librechat-mongodb
+    image: ${MONGO_IMAGE:-mongo:8.0}
+    command:
+      - mongod
+      - --noauth
+      - --logpath
+      - /data/db/logs/mongodb.log
+      - --logappend
+    volumes:
+      - ${MONGO_DATA_DIR:-./data/mongodb}:/data/db
+      - ${MONGODB_LOGS_DIR:-./data/logs/mongodb}:/data/db/logs
+    healthcheck:
+      test:
+        - CMD
+        - mongosh
+        - --quiet
+        - --eval
+        - "db.runCommand({ ping: 1 }).ok"
+    networks:
+      - sales_agent_net
+    restart: unless-stopped
+
+networks:
+  sales_agent_net:
+    name: sales_agent_net
+
+secrets:
+  minio_access_key:
+    environment: MINIO_ACCESS_KEY
+  minio_secret_key:
+    environment: MINIO_SECRET_KEY

@@ -1,0 +1,55 @@
+build_sales_agent_librechat:
+  stage: build
+  image: docker.fzyun.io/docker:28.1.1
+
+  variables:
+    SERVICE_DIR: "services/librechat_sales"
+    IMAGE_NAME: "$REGISTRY_URL/sales-agents/founder-sales-librechat"
+    LIBRECHAT_BASE_IMAGE: "registry.librechat.ai/danny-avila/librechat:v0.8.7"
+    CUSTOM_IMAGE_TAG: ""
+
+  before_script:
+    - |
+      echo "$PRIVATE_CI_REGISTRY_PASSWORD" | docker login \
+        -u "$PRIVATE_CI_REGISTRY_USER" \
+        --password-stdin \
+        "$REGISTRY_URL" || { echo "Harbor 登录失败"; exit 1; }
+
+  script:
+    - |
+      if [ "$CI_COMMIT_BRANCH" = "main" ] && [ -n "$CUSTOM_IMAGE_TAG" ]; then
+        IMAGE_TAG="$CUSTOM_IMAGE_TAG"
+        echo "使用手动指定版本号: ${IMAGE_TAG}"
+      else
+        IMAGE_TAG="$(echo "$CI_COMMIT_SHA" | cut -c1-8)"
+        echo "使用 commit SHA 作为标签: ${IMAGE_TAG}"
+      fi
+
+      echo "开始构建定制 LibreChat 镜像: ${IMAGE_NAME}:${IMAGE_TAG}"
+      DOCKER_BUILDKIT=1 docker build \
+        --build-arg "LIBRECHAT_BASE_IMAGE=${LIBRECHAT_BASE_IMAGE}" \
+        -f "${SERVICE_DIR}/Dockerfile" \
+        -t "${IMAGE_NAME}:${IMAGE_TAG}" \
+        "${SERVICE_DIR}" || { echo "定制 LibreChat 镜像构建失败"; exit 1; }
+
+      docker push "${IMAGE_NAME}:${IMAGE_TAG}" || { echo "镜像推送失败"; exit 1; }
+
+      if [ "$CI_COMMIT_BRANCH" = "main" ] && [ -n "$CUSTOM_IMAGE_TAG" ]; then
+        docker tag "${IMAGE_NAME}:${IMAGE_TAG}" "${IMAGE_NAME}:latest"
+        docker push "${IMAGE_NAME}:latest" || { echo "推送 latest 失败"; exit 1; }
+      fi
+
+      # test 和任意 test-* 分支额外推送浮动 test 标签，供远程测试 compose 固定引用
+      case "$CI_COMMIT_BRANCH" in
+        test|test-?*)
+          echo "为${CI_COMMIT_BRANCH}分支打上test标签"
+          docker tag "${IMAGE_NAME}:${IMAGE_TAG}" "${IMAGE_NAME}:test"
+          docker push "${IMAGE_NAME}:test" || { echo "推送 test 失败"; exit 1; }
+          ;;
+      esac
+
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && ($CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "test" || $CI_COMMIT_BRANCH =~ /^test-.+$/)'
+      changes:
+        - services/librechat_sales/**/*
+        - .gitlab-ci.yml
