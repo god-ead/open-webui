@@ -53,6 +53,7 @@ function writeCompressedVariants(file) {
 }
 
 const authRoute = "/app/api/server/routes/auth.js";
+const authService = "/app/api/server/services/AuthService.js";
 
 // 注入 CRM 控制器依赖与专用入口、token 兑换路由。
 replaceOnce(
@@ -61,7 +62,9 @@ replaceOnce(
   `const { loginController } = require('~/server/controllers/auth/LoginController');
 const {
   crmAuthController,
+  crmAuthRequestLogger,
   crmEntryController,
+  crmRefreshRequestLogger,
   requireEmailLoginEnabled,
 } = require('~/server/controllers/auth/CrmAuthController');`,
 );
@@ -70,13 +73,47 @@ replaceOnce(
   "//Local\nrouter.post('/logout', middleware.requireJwtAuth, logoutController);",
   `//Local
 router.get('/crm/entry', crmEntryController);
-router.post('/crm', middleware.loginLimiter, crmAuthController);
+router.post('/crm', crmAuthRequestLogger, middleware.loginLimiter, crmAuthController);
 router.post('/logout', middleware.requireJwtAuth, logoutController);`,
+);
+replaceOnce(
+  authRoute,
+  "router.post('/refresh', refreshController);",
+  "router.post('/refresh', crmRefreshRequestLogger, refreshController);",
 );
 replaceOnce(
   authRoute,
   "  middleware.checkBan,\n  ldapAuth ? middleware.requireLdapAuth : middleware.requireLocalAuth,",
   "  middleware.checkBan,\n  requireEmailLoginEnabled,\n  ldapAuth ? middleware.requireLdapAuth : middleware.requireLocalAuth,",
+);
+
+// HTTPS iframe 允许跨站携带会话 Cookie；本地 HTTP 回退到 Lax。
+replaceOnce(
+  authService,
+  `    res.cookie('refreshToken', refreshToken, {
+      expires: new Date(refreshTokenExpires),
+      httpOnly: true,
+      secure: shouldUseSecureCookie(),
+      sameSite: 'strict',
+    });
+    res.cookie('token_provider', 'librechat', {
+      expires: new Date(refreshTokenExpires),
+      httpOnly: true,
+      secure: shouldUseSecureCookie(),
+      sameSite: 'strict',
+    });`,
+  `    res.cookie('refreshToken', refreshToken, {
+      expires: new Date(refreshTokenExpires),
+      httpOnly: true,
+      secure: shouldUseSecureCookie(),
+      sameSite: shouldUseSecureCookie() ? 'none' : 'lax',
+    });
+    res.cookie('token_provider', 'librechat', {
+      expires: new Date(refreshTokenExpires),
+      httpOnly: true,
+      secure: shouldUseSecureCookie(),
+      sameSite: shouldUseSecureCookie() ? 'none' : 'lax',
+    });`,
 );
 
 const clientRoot = "/app/client/dist";
@@ -107,6 +144,13 @@ const accountSettingsName = findReferencedAsset(
   2,
 );
 const accountSettingsAsset = path.join(assetsRoot, accountSettingsName);
+const hooksName = findReferencedAsset(
+  clientEntrySource,
+  /hooks\.[A-Za-z0-9_-]+\.js/g,
+  "hooks asset",
+  3,
+);
+const hooksAsset = path.join(assetsRoot, hooksName);
 
 replaceOnce(
   accountSettingsAsset,
@@ -129,17 +173,47 @@ replaceOnce(
   "",
 );
 
+// 所有用户进入会话时默认展开思考过程，不沿用本地折叠偏好。
+replaceExpected(hooksAsset, "useState)(dt(sW))", "useState)(!0)", 2);
+
+// 纯中文姓名使用末尾两个字生成头像，英文及混合名称沿用上游规则。
+replaceOnce(
+  hooksAsset,
+  "seed:r,fontFamily:[`Verdana`]",
+  "seed:/^\\p{Script=Han}+$/u.test(r)?Array.from(r).slice(-2).join(``):r,fontFamily:[`Verdana`]",
+);
+
+// 当前思考内容仍在流式输出时，在面板末尾显示旋转状态。
+replaceOnce(
+  hooksAsset,
+  'dW=(0,J.memo)(({children:e})=>(0,Y.jsx)(`div`,{className:`relative rounded-lg border border-border-light bg-surface-secondary p-3 pb-8 text-text-secondary`,children:(0,Y.jsx)(`p`,{className:Z(`whitespace-pre-wrap leading-[26px]`,dt(lW)),children:e})}))',
+  'dW=(0,J.memo)(({children:e,isRunning:t=!1})=>(0,Y.jsx)(`div`,{className:`relative rounded-lg border border-border-light bg-surface-secondary p-3 pb-8 text-text-secondary`,children:(0,Y.jsxs)(`p`,{className:Z(`whitespace-pre-wrap leading-[26px]`,dt(lW)),children:[e,t&&(0,Y.jsxs)(`svg`,{viewBox:`0 0 24 24`,fill:`none`,className:`ml-2 inline-block h-[18px] w-[18px] align-middle`,style:{animation:`spin 0.8s linear infinite`,transformOrigin:`center`},"aria-hidden":`true`,children:[(0,Y.jsx)(`circle`,{cx:`12`,cy:`12`,r:`9`,stroke:`currentColor`,strokeWidth:`3`,opacity:`0.2`}),(0,Y.jsx)(`circle`,{cx:`12`,cy:`12`,r:`9`,stroke:`currentColor`,strokeWidth:`3`,strokeLinecap:`round`,strokeDasharray:`38 19`,opacity:`0.9`})]})]})}))',
+);
+replaceOnce(
+  hooksAsset,
+  "dW,{children:m}",
+  "dW,{isRunning:b&&t,children:m}",
+);
+
 // 文件名保留上游 hash，通过内容摘要促使 Workbox 刷新原地修改的资源。
 const patchedAccountSettings = fs.readFileSync(accountSettingsAsset);
 const accountSettingsRevision = crypto
   .createHash("sha256")
   .update(patchedAccountSettings)
   .digest("hex");
+const patchedHooks = fs.readFileSync(hooksAsset);
+const hooksRevision = crypto.createHash("sha256").update(patchedHooks).digest("hex");
 const serviceWorker = path.join(clientRoot, "sw.js");
 replaceOnce(
   serviceWorker,
   `{url:"assets/${accountSettingsName}",revision:null}`,
   `{url:"assets/${accountSettingsName}",revision:"${accountSettingsRevision}"}`,
 );
+replaceOnce(
+  serviceWorker,
+  `{url:"assets/${hooksName}",revision:null}`,
+  `{url:"assets/${hooksName}",revision:"${hooksRevision}"}`,
+);
 
 writeCompressedVariants(accountSettingsAsset);
+writeCompressedVariants(hooksAsset);

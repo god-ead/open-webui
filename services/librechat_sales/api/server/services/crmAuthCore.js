@@ -19,7 +19,7 @@ class CrmAuthError extends Error {
   }
 }
 
-/** 解析去重后的 Origin 白名单，拒绝路径、非 HTTP(S) 地址和空配置。 */
+/** 解析去重后的 Origin 白名单，允许单独使用通配符 `*`。 */
 function parseOrigins(value) {
   if (!value) {
     throw new Error("CRM_ALLOWED_ORIGINS is required");
@@ -28,6 +28,9 @@ function parseOrigins(value) {
   const origins = [...new Set(value.split(",").map((item) => item.trim()).filter(Boolean))];
   if (origins.length === 0) {
     throw new Error("CRM_ALLOWED_ORIGINS must contain at least one origin");
+  }
+  if (origins.length === 1 && origins[0] === "*") {
+    return origins;
   }
 
   for (const origin of origins) {
