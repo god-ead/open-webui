@@ -176,6 +176,13 @@ replaceOnce(
 // 所有用户进入会话时默认展开思考过程，不沿用本地折叠偏好。
 replaceExpected(hooksAsset, "useState)(dt(sW))", "useState)(!0)", 2);
 
+// 纯中文姓名使用末尾两个字生成头像，英文及混合名称沿用上游规则。
+replaceOnce(
+  hooksAsset,
+  "seed:r,fontFamily:[`Verdana`]",
+  "seed:/^\\p{Script=Han}+$/u.test(r)?Array.from(r).slice(-2).join(``):r,fontFamily:[`Verdana`]",
+);
+
 // 当前思考内容仍在流式输出时，在面板末尾显示旋转状态。
 replaceOnce(
   hooksAsset,
