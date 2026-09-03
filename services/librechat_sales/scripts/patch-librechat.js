@@ -53,6 +53,7 @@ function writeCompressedVariants(file) {
 }
 
 const authRoute = "/app/api/server/routes/auth.js";
+const authService = "/app/api/server/services/AuthService.js";
 
 // 注入 CRM 控制器依赖与专用入口、token 兑换路由。
 replaceOnce(
@@ -61,7 +62,9 @@ replaceOnce(
   `const { loginController } = require('~/server/controllers/auth/LoginController');
 const {
   crmAuthController,
+  crmAuthRequestLogger,
   crmEntryController,
+  crmRefreshRequestLogger,
   requireEmailLoginEnabled,
 } = require('~/server/controllers/auth/CrmAuthController');`,
 );
@@ -70,13 +73,47 @@ replaceOnce(
   "//Local\nrouter.post('/logout', middleware.requireJwtAuth, logoutController);",
   `//Local
 router.get('/crm/entry', crmEntryController);
-router.post('/crm', middleware.loginLimiter, crmAuthController);
+router.post('/crm', crmAuthRequestLogger, middleware.loginLimiter, crmAuthController);
 router.post('/logout', middleware.requireJwtAuth, logoutController);`,
+);
+replaceOnce(
+  authRoute,
+  "router.post('/refresh', refreshController);",
+  "router.post('/refresh', crmRefreshRequestLogger, refreshController);",
 );
 replaceOnce(
   authRoute,
   "  middleware.checkBan,\n  ldapAuth ? middleware.requireLdapAuth : middleware.requireLocalAuth,",
   "  middleware.checkBan,\n  requireEmailLoginEnabled,\n  ldapAuth ? middleware.requireLdapAuth : middleware.requireLocalAuth,",
+);
+
+// HTTPS iframe 允许跨站携带会话 Cookie；本地 HTTP 回退到 Lax。
+replaceOnce(
+  authService,
+  `    res.cookie('refreshToken', refreshToken, {
+      expires: new Date(refreshTokenExpires),
+      httpOnly: true,
+      secure: shouldUseSecureCookie(),
+      sameSite: 'strict',
+    });
+    res.cookie('token_provider', 'librechat', {
+      expires: new Date(refreshTokenExpires),
+      httpOnly: true,
+      secure: shouldUseSecureCookie(),
+      sameSite: 'strict',
+    });`,
+  `    res.cookie('refreshToken', refreshToken, {
+      expires: new Date(refreshTokenExpires),
+      httpOnly: true,
+      secure: shouldUseSecureCookie(),
+      sameSite: shouldUseSecureCookie() ? 'none' : 'lax',
+    });
+    res.cookie('token_provider', 'librechat', {
+      expires: new Date(refreshTokenExpires),
+      httpOnly: true,
+      secure: shouldUseSecureCookie(),
+      sameSite: shouldUseSecureCookie() ? 'none' : 'lax',
+    });`,
 );
 
 const clientRoot = "/app/client/dist";

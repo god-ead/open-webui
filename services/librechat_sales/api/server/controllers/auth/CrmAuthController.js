@@ -16,6 +16,84 @@ const INTERNAL_ERROR_CODES = new Set([
   "CRM_AUTH_SESSION_FAILED",
 ]);
 
+/** 生成不可逆短摘要，用于关联同一 CRM token 的重复请求。 */
+function tokenFingerprint(token) {
+  if (typeof token !== "string" || !token) {
+    return null;
+  }
+  return crypto.createHash("sha256").update(token).digest("hex").slice(0, 12);
+}
+
+/** 返回请求经过代理后的地址视图，不将任一转发头视为可信身份。 */
+function requestNetworkDetails(req) {
+  return {
+    ip: req.ip,
+    ips: req.ips,
+    remoteAddress: req.socket?.remoteAddress || null,
+    forwardedFor: req.headers["x-forwarded-for"] || null,
+  };
+}
+
+/** 判断指定 Cookie 是否随请求到达服务端，不读取或记录其值。 */
+function hasCookie(req, name) {
+  const cookie = req.headers.cookie;
+  return (
+    typeof cookie === "string" &&
+    cookie.split(";").some((part) => part.trim().startsWith(`${name}=`))
+  );
+}
+
+/** 提取认证 Cookie 的公开属性，排除 Cookie 值。 */
+function authCookieAttributes(res) {
+  const header = res.getHeader("set-cookie");
+  const values = Array.isArray(header) ? header : header ? [header] : [];
+  return values.flatMap((value) => {
+    const [pair, ...attributes] = String(value)
+      .split(";")
+      .map((part) => part.trim());
+    const name = pair.slice(0, pair.indexOf("="));
+    if (name !== "refreshToken" && name !== "token_provider") {
+      return [];
+    }
+    const findAttribute = (prefix) =>
+      attributes.find((attribute) => attribute.toLowerCase().startsWith(prefix));
+    return [
+      {
+        name,
+        path: findAttribute("path=")?.slice(5) || null,
+        sameSite: findAttribute("samesite=")?.slice(9) || null,
+        secure: attributes.some((attribute) => attribute.toLowerCase() === "secure"),
+        httpOnly: attributes.some((attribute) => attribute.toLowerCase() === "httponly"),
+      },
+    ];
+  });
+}
+
+/** 在响应完成或连接提前关闭时只记录一次结果。 */
+function logResponseCompletion(res, message, fields, startedAt) {
+  let logged = false;
+  const complete = (outcome) => {
+    if (logged) {
+      return;
+    }
+    logged = true;
+    writeCrmAuthLog("info", message, {
+      ...fields,
+      outcome,
+      statusCode: res.statusCode,
+      contentType: res.getHeader("content-type") || null,
+      durationMs: Date.now() - startedAt,
+    });
+  };
+  res.once("finish", () => complete("finished"));
+  res.once("close", () => complete("closed"));
+}
+
+/** 同时保留结构化字段与消息副本，兼容 LibreChat 文件日志字段过滤。 */
+function writeCrmAuthLog(level, message, fields) {
+  logger[level](`${message} ${JSON.stringify(fields)}`);
+}
+
 /** 解析 LibreChat 对外地址，统一生成同源兑换路径与跳转路径。 */
 function getPublicLocation() {
   try {
@@ -72,7 +150,10 @@ function renderEntryPage(nonce) {
       const allowedOrigins = ${origins};
       const exchangePath = ${exchangePath};
       const status = document.getElementById('status');
+      const retryDelayMs = 100;
+      const retryWindowMs = 1000;
       let started = false;
+      let retryDeadline = 0;
 
       const fail = () => {
         status.textContent = '认证失败，请关闭窗口并从 CRM 重新进入';
@@ -87,10 +168,23 @@ function renderEntryPage(nonce) {
       };
 
       const requestNewToken = () => {
-        // 认证失败后允许接收新 token，供父窗口无刷新地重新发起认证。
-        started = false;
+        // 每次失败后延迟请求新 token，并以首次失败为起点限制整个重试窗口。
+        const now = performance.now();
+        retryDeadline ||= now + retryWindowMs;
+        if (now + retryDelayMs > retryDeadline) {
+          fail();
+          return;
+        }
+
         status.textContent = '认证信息已失效，正在等待 CRM 重新认证…';
-        notifyParent({ source: 'fm-agent', type: 'token-expired' });
+        window.setTimeout(() => {
+          if (performance.now() > retryDeadline) {
+            fail();
+            return;
+          }
+          started = false;
+          notifyParent({ source: 'fm-agent', type: 'token-expired' });
+        }, retryDelayMs);
       };
 
       const takeUrlToken = () => {
@@ -142,8 +236,12 @@ function renderEntryPage(nonce) {
       };
 
       window.addEventListener('message', (event) => {
-        // 同时验证父窗口引用、Origin 与协议字段，拒绝其他窗口伪造消息。
-        if (started || event.source !== window.parent || !allowedOrigins.includes(event.origin)) {
+        // 白名单配置为 '*' 时仅校验父窗口引用与协议字段。
+        if (
+          started ||
+          event.source !== window.parent ||
+          (!allowedOrigins.includes('*') && !allowedOrigins.includes(event.origin))
+        ) {
           return;
         }
         if (
@@ -192,9 +290,45 @@ function errorResponse(res, code, status = 401) {
   });
 }
 
+/** 在限流前记录 CRM token 兑换请求，确保 429 也可追踪。 */
+function crmAuthRequestLogger(req, res, next) {
+  const startedAt = Date.now();
+  const context = {
+    requestId: crypto.randomUUID(),
+    tokenFingerprint: tokenFingerprint(req.body?.token),
+  };
+  req.crmAuthLog = context;
+  writeCrmAuthLog("info", "[crmAuth] request received", {
+    ...context,
+    origin: req.headers.origin || null,
+    ...requestNetworkDetails(req),
+  });
+  logResponseCompletion(res, "[crmAuth] request completed", context, startedAt);
+  return next();
+}
+
+/** 记录 refresh 是否收到 CRM 登录签发的会话 Cookie。 */
+function crmRefreshRequestLogger(req, res, next) {
+  const startedAt = Date.now();
+  const context = {
+    requestId: crypto.randomUUID(),
+    hasRefreshToken: hasCookie(req, "refreshToken"),
+    hasTokenProvider: hasCookie(req, "token_provider"),
+  };
+  writeCrmAuthLog("info", "[crmAuth] refresh received", {
+    ...context,
+    origin: req.headers.origin || null,
+    ...requestNetworkDetails(req),
+  });
+  logResponseCompletion(res, "[crmAuth] refresh completed", context, startedAt);
+  return next();
+}
+
 /** 兑换 CRM token，解析本地账户并签发 LibreChat 原生会话。 */
 async function crmAuthController(req, res) {
-  const requestId = crypto.randomUUID();
+  const requestId = req.crmAuthLog?.requestId || crypto.randomUUID();
+  const fingerprint =
+    req.crmAuthLog?.tokenFingerprint || tokenFingerprint(req.body?.token);
   const startedAt = Date.now();
   try {
     if (req.headers.origin && req.headers.origin !== publicLocation.origin) {
@@ -211,8 +345,10 @@ async function crmAuthController(req, res) {
     } catch (error) {
       throw new CrmAuthError("CRM_AUTH_SESSION_FAILED", error);
     }
-    logger.info("[crmAuth] authentication succeeded", {
+    writeCrmAuthLog("info", "[crmAuth] authentication succeeded", {
       requestId,
+      tokenFingerprint: fingerprint,
+      authCookies: authCookieAttributes(res),
       durationMs: Date.now() - startedAt,
     });
     return res.status(200).json({ ok: true, redirect: `${publicBasePath}/c/new` });
@@ -220,8 +356,9 @@ async function crmAuthController(req, res) {
     const expected = error instanceof CrmAuthError;
     const code = expected ? error.code : "CRM_AUTH_ACCOUNT_FAILED";
     const internal = !expected || INTERNAL_ERROR_CODES.has(code);
-    logger[internal ? "error" : "warn"]("[crmAuth] authentication failed", {
+    writeCrmAuthLog(internal ? "error" : "warn", "[crmAuth] authentication failed", {
       requestId,
+      tokenFingerprint: fingerprint,
       code,
       durationMs: Date.now() - startedAt,
     });
@@ -240,6 +377,8 @@ function requireEmailLoginEnabled(_req, res, next) {
 
 module.exports = {
   crmAuthController,
+  crmAuthRequestLogger,
   crmEntryController,
+  crmRefreshRequestLogger,
   requireEmailLoginEnabled,
 };
