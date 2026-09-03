@@ -88,23 +88,16 @@ MongoDB 使用两个网关专用集合：
 cd deploy/sales_agent
 cp .env.example .env
 # 填写密钥和服务配置
-docker compose --env-file .env \
-  -f docker-compose.yaml \
-  -f docker-compose.dev.yaml \
-  config
-docker compose --env-file .env \
-  -f docker-compose.yaml \
-  -f docker-compose.dev.yaml \
-  up -d --build
+docker compose up -d
 ```
 
-只构建本服务镜像：
+开发环境构建镜像：
 
 ```bash
 docker compose --env-file .env \
   -f docker-compose.yaml \
   -f docker-compose.dev.yaml \
-  build founder-sales-agent founder-sales-librechat
+  up -d --build
 ```
 
 ## 管理员角色
